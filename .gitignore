@@ -1,0 +1,12 @@
+# Rust / Soroban build output
+target/
+**/target/
+*.wasm
+test_snapshots/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
