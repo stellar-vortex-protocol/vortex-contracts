@@ -87,4 +87,4 @@ See the org-wide
 
 ## License
 
-[MIT](./LICENSE) © 2025 Vortex Protocol Contributors
+[MIT](./LICENSE) © 2025–2026 Vortex Protocol Contributors
