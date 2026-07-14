@@ -724,6 +724,10 @@ impl IntentSettlement {
         env.storage().instance().get(&DataKey::FeeRecipient)
     }
 
+    pub fn get_bond_token(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::BondToken)
+    }
+
     pub fn get_admin(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Admin)
     }
