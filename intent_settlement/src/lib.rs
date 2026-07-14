@@ -127,6 +127,7 @@ pub enum Error {
     NotInitialized = 16,
     SolverHasActiveIntents = 17,
     ContractPaused = 18,
+    DeadlineNotReached = 19,
     InsufficientBond = 19,
 }
 
@@ -675,6 +676,38 @@ impl IntentSettlement {
             (Symbol::new(&env, "solver_slashed"), solver_addr),
             (intent_id, slash_amount),
         );
+    }
+
+    /// Permissionless: materialize an Open intent's Expired state once its
+    /// deadline has passed. Expiry was previously only ever realized lazily
+    /// inside accept_intent, so an intent nobody tried to accept could sit
+    /// indefinitely showing state Open in storage despite being unfillable.
+    pub fn expire_intent(env: Env, intent_id: BytesN<32>) {
+        Self::bump_instance_ttl(&env);
+
+        let mut intent: IntentRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Intent(intent_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::IntentNotFound));
+
+        if intent.state != IntentState::Open {
+            panic_with_error!(&env, Error::IntentNotOpen);
+        }
+
+        let now = env.ledger().timestamp();
+        if now < intent.deadline {
+            panic_with_error!(&env, Error::DeadlineNotReached);
+        }
+
+        intent.state = IntentState::Expired;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
+
+        env.events()
+            .publish((Symbol::new(&env, "intent_expired"),), intent_id);
     }
 
     // ── Views ─────────────────────────────────────────────────────────────────
