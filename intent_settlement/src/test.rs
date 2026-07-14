@@ -252,6 +252,29 @@ fn register_solver_locks_bond() {
 }
 
 #[test]
+fn is_solver_eligible_reflects_registration_and_bond_state() {
+    let ctx = setup();
+    let c = ctx.client();
+
+    // Never registered.
+    assert!(!c.is_solver_eligible(&ctx.solver));
+
+    ctx.register_solver();
+    assert!(c.is_solver_eligible(&ctx.solver));
+
+    // Deactivated by a slash that drops bond below MIN_BOND.
+    let thin_bond = MIN_BOND + MIN_BOND / 10;
+    let other = Address::generate(&ctx.env);
+    ctx.bond_admin().mint(&other, &thin_bond);
+    c.register_solver(&other, &thin_bond);
+    let id = ctx.submit();
+    c.accept_intent(&other, &id);
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+    assert!(!c.is_solver_eligible(&other));
+}
+
+#[test]
 fn register_solver_below_minimum_fails() {
     let ctx = setup();
     ctx.bond_admin().mint(&ctx.solver, &BOND);
