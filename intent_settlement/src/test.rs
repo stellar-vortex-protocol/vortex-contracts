@@ -467,6 +467,39 @@ fn deregister_with_accepted_intent_fails() {
 }
 
 #[test]
+fn active_intents_counts_multiple_concurrent_accepted_intents() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+
+    let id1 = ctx.submit();
+    ctx.pass_time(1); // distinct timestamp so compute_intent_id doesn't collide
+    let id2 = ctx.submit();
+
+    c.accept_intent(&ctx.solver, &id1);
+    c.accept_intent(&ctx.solver, &id2);
+    assert_eq!(c.get_solver(&ctx.solver).unwrap().active_intents, 2);
+
+    // Can't deregister while either obligation is outstanding.
+    let res = c.try_deregister_solver(&ctx.solver);
+    assert_eq!(res, Err(Ok(Error::SolverHasActiveIntents.into())));
+
+    // Clearing one via fill decrements the counter but doesn't zero it.
+    let fee = FILL * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
+    c.fill_intent(&ctx.solver, &id1, &FILL);
+    assert_eq!(c.get_solver(&ctx.solver).unwrap().active_intents, 1);
+    let res = c.try_deregister_solver(&ctx.solver);
+    assert_eq!(res, Err(Ok(Error::SolverHasActiveIntents.into())));
+
+    // Clearing the second (via slash) zeroes it and unblocks deregistration.
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id2);
+    assert_eq!(c.get_solver(&ctx.solver).unwrap().active_intents, 0);
+    c.deregister_solver(&ctx.solver);
+}
+
+#[test]
 fn deregister_after_fill_succeeds() {
     let ctx = setup();
     let c = ctx.client();
