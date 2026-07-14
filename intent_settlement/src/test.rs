@@ -252,6 +252,29 @@ fn register_solver_locks_bond() {
 }
 
 #[test]
+fn is_solver_eligible_reflects_registration_and_bond_state() {
+    let ctx = setup();
+    let c = ctx.client();
+
+    // Never registered.
+    assert!(!c.is_solver_eligible(&ctx.solver));
+
+    ctx.register_solver();
+    assert!(c.is_solver_eligible(&ctx.solver));
+
+    // Deactivated by a slash that drops bond below MIN_BOND.
+    let thin_bond = MIN_BOND + MIN_BOND / 10;
+    let other = Address::generate(&ctx.env);
+    ctx.bond_admin().mint(&other, &thin_bond);
+    c.register_solver(&other, &thin_bond);
+    let id = ctx.submit();
+    c.accept_intent(&other, &id);
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+    assert!(!c.is_solver_eligible(&other));
+}
+
+#[test]
 fn register_solver_below_minimum_fails() {
     let ctx = setup();
     ctx.bond_admin().mint(&ctx.solver, &BOND);
@@ -375,6 +398,61 @@ fn withdraw_bond_allowed_with_active_intent_if_still_above_minimum() {
 }
 
 #[test]
+fn withdraw_bond_reflects_reduced_balance_after_a_prior_slash() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+    let bond_after_slash = c.get_solver(&ctx.solver).unwrap().bond_amount;
+    assert!(bond_after_slash < BOND);
+
+    // Withdrawing more than the (slash-reduced) balance still fails against
+    // the current balance, not the original pre-slash BOND.
+    let res = c.try_withdraw_bond(&ctx.solver, &(bond_after_slash + 1));
+    assert_eq!(res, Err(Ok(Error::InsufficientBond.into())));
+
+    // A withdrawal that respects the reduced balance and stays above
+    // MIN_BOND still succeeds.
+    let small_withdrawal = bond_after_slash - MIN_BOND;
+    c.withdraw_bond(&ctx.solver, &small_withdrawal);
+    assert_eq!(
+        c.get_solver(&ctx.solver).unwrap().bond_amount,
+        bond_after_slash - small_withdrawal
+    );
+}
+
+#[test]
+fn withdraw_bond_fails_entirely_once_slash_deactivates_solver() {
+    // A solver whose bond has already dropped below MIN_BOND (and who was
+    // therefore deactivated by PR3's guard) can't withdraw_bond at all --
+    // any positive withdrawal would only push them further below MIN_BOND,
+    // so the existing SolverBondTooLow check rejects it without needing a
+    // separate is_active check in withdraw_bond itself.
+    let ctx = setup();
+    let c = ctx.client();
+
+    let thin_bond = MIN_BOND + MIN_BOND / 10;
+    ctx.bond_admin().mint(&ctx.solver, &thin_bond);
+    c.register_solver(&ctx.solver, &thin_bond);
+
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+
+    let record = c.get_solver(&ctx.solver).unwrap();
+    assert!(record.bond_amount < MIN_BOND);
+    assert!(!record.is_active);
+
+    let res = c.try_withdraw_bond(&ctx.solver, &1);
+    assert_eq!(res, Err(Ok(Error::SolverBondTooLow.into())));
+}
+
+#[test]
 fn deregister_with_accepted_intent_fails() {
     let ctx = setup();
     ctx.register_solver();
@@ -435,6 +513,68 @@ fn submit_intent_creates_open_record() {
     assert_eq!(intent.solver, None);
 
     assert_eq!(ctx.client().get_stats().0, 1);
+}
+
+#[test]
+fn dst_allowlist_disabled_by_default_allows_any_token() {
+    let ctx = setup();
+    assert!(!ctx.client().is_dst_allowlist_enabled());
+    assert!(!ctx.client().is_dst_token_allowed(&ctx.dst_token));
+
+    // Submission succeeds even though the token was never explicitly allowed.
+    ctx.submit();
+}
+
+#[test]
+fn dst_allowlist_blocks_unlisted_token_once_enabled() {
+    let ctx = setup();
+    let c = ctx.client();
+    c.set_dst_allowlist_enabled(&true);
+
+    let deadline: Option<u64> = None;
+    let res = c.try_submit_intent(
+        &ctx.user,
+        &String::from_str(&ctx.env, "ethereum"),
+        &String::from_str(&ctx.env, "0xabc"),
+        &SRC_AMT,
+        &ctx.dst_token,
+        &MIN_DST,
+        &deadline,
+    );
+    assert_eq!(res, Err(Ok(Error::DstTokenNotAllowed.into())));
+}
+
+#[test]
+fn dst_allowlist_allows_listed_token_once_enabled() {
+    let ctx = setup();
+    let c = ctx.client();
+    c.add_allowed_dst_token(&ctx.dst_token);
+    c.set_dst_allowlist_enabled(&true);
+
+    assert!(c.is_dst_token_allowed(&ctx.dst_token));
+    ctx.submit();
+}
+
+#[test]
+fn dst_allowlist_removal_blocks_previously_allowed_token() {
+    let ctx = setup();
+    let c = ctx.client();
+    c.add_allowed_dst_token(&ctx.dst_token);
+    c.set_dst_allowlist_enabled(&true);
+    c.remove_allowed_dst_token(&ctx.dst_token);
+
+    assert!(!c.is_dst_token_allowed(&ctx.dst_token));
+    let deadline: Option<u64> = None;
+    let res = c.try_submit_intent(
+        &ctx.user,
+        &String::from_str(&ctx.env, "ethereum"),
+        &String::from_str(&ctx.env, "0xabc"),
+        &SRC_AMT,
+        &ctx.dst_token,
+        &MIN_DST,
+        &deadline,
+    );
+    assert_eq!(res, Err(Ok(Error::DstTokenNotAllowed.into())));
 }
 
 #[test]
@@ -814,4 +954,10 @@ fn get_intent_returns_none_for_unknown_id() {
     let ctx = setup();
     let unknown = BytesN::from_array(&ctx.env, &[0u8; 32]);
     assert!(ctx.client().get_intent(&unknown).is_none());
+}
+
+#[test]
+fn get_bond_token_returns_configured_token() {
+    let ctx = setup();
+    assert_eq!(ctx.client().get_bond_token(), Some(ctx.bond_token.clone()));
 }

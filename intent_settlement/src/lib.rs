@@ -46,7 +46,10 @@ pub enum DataKey {
     Solver(Address),    // address -> SolverRecord
     TotalIntents,
     TotalVolume,
+    TotalSolvers,
     Paused,
+    AllowedDstToken(Address), // dst_token -> present if allowed
+    DstAllowlistEnabled,
 }
 
 // ─── Data Structs ─────────────────────────────────────────────────────────────
@@ -154,6 +157,7 @@ impl IntentSettlement {
             .set(&DataKey::BondToken, &bond_token);
         env.storage().instance().set(&DataKey::TotalIntents, &0u64);
         env.storage().instance().set(&DataKey::TotalVolume, &0i128);
+        env.storage().instance().set(&DataKey::TotalSolvers, &0u32);
         Self::bump_instance_ttl(&env);
     }
 
@@ -195,6 +199,54 @@ impl IntentSettlement {
 
         env.events()
             .publish((Symbol::new(&env, "admin_transferred"),), new_admin);
+    }
+
+    // ── Destination Token Allowlist ───────────────────────────────────────────
+
+    /// Admin-only: allow a dst_token to be targeted by new intents.
+    /// submit_intent had no validation on dst_token at all -- any address,
+    /// including a bogus or malicious "token" contract, could be named as
+    /// the destination.
+    pub fn add_allowed_dst_token(env: Env, token: Address) {
+        Self::require_admin(&env);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowedDstToken(token.clone()), &true);
+        env.events()
+            .publish((Symbol::new(&env, "dst_token_allowed"),), token);
+    }
+
+    pub fn remove_allowed_dst_token(env: Env, token: Address) {
+        Self::require_admin(&env);
+        env.storage()
+            .instance()
+            .remove(&DataKey::AllowedDstToken(token.clone()));
+        env.events()
+            .publish((Symbol::new(&env, "dst_token_disallowed"),), token);
+    }
+
+    pub fn is_dst_token_allowed(env: Env, token: Address) -> bool {
+        env.storage()
+            .instance()
+            .has(&DataKey::AllowedDstToken(token))
+    }
+
+    /// Admin-only: turn allowlist enforcement in submit_intent on/off.
+    /// Off by default -- an admin opts in once they've populated the list
+    /// via add_allowed_dst_token, rather than every intent submission
+    /// suddenly requiring one.
+    pub fn set_dst_allowlist_enabled(env: Env, enabled: bool) {
+        Self::require_admin(&env);
+        env.storage()
+            .instance()
+            .set(&DataKey::DstAllowlistEnabled, &enabled);
+    }
+
+    pub fn is_dst_allowlist_enabled(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::DstAllowlistEnabled)
+            .unwrap_or(false)
     }
 
     // ── Pause Control ─────────────────────────────────────────────────────────
@@ -247,6 +299,8 @@ impl IntentSettlement {
             panic_with_error!(&env, Error::SolverBondTooLow);
         }
 
+        let is_new_solver = existing.is_none();
+
         let bond_token: Address = env.storage().instance().get(&DataKey::BondToken).unwrap();
         let client = token::Client::new(&env, &bond_token);
         client.transfer(&solver, &env.current_contract_address(), &bond_amount);
@@ -273,6 +327,17 @@ impl IntentSettlement {
             .persistent()
             .set(&DataKey::Solver(solver.clone()), &record);
         Self::bump_solver_ttl(&env, &solver);
+
+        if is_new_solver {
+            let total: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::TotalSolvers)
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&DataKey::TotalSolvers, &(total + 1));
+        }
 
         env.events().publish(
             (Symbol::new(&env, "solver_registered"), solver),
@@ -308,6 +373,15 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .remove(&DataKey::Solver(solver.clone()));
+
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalSolvers)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalSolvers, &total.saturating_sub(1));
 
         env.events().publish(
             (Symbol::new(&env, "solver_deregistered"), solver),
@@ -376,6 +450,12 @@ impl IntentSettlement {
 
         if src_amount <= 0 || min_dst_amount <= 0 {
             panic_with_error!(&env, Error::ZeroAmount);
+        }
+
+        if Self::is_dst_allowlist_enabled(env.clone())
+            && !Self::is_dst_token_allowed(env.clone(), dst_token.clone())
+        {
+            panic_with_error!(&env, Error::DstTokenNotAllowed);
         }
 
         let now = env.ledger().timestamp();
@@ -724,12 +804,29 @@ impl IntentSettlement {
         env.storage().persistent().get(&DataKey::Solver(solver))
     }
 
-    /// The address currently receiving protocol fees and slashed bonds.
+    /// Whether `solver` currently meets accept_intent's requirements
+    /// (registered, active, bonded above MIN_BOND). Lets off-chain solver
+    /// bots self-check eligibility without independently reimplementing
+    /// the same logic accept_intent enforces.
+    pub fn is_solver_eligible(env: Env, solver: Address) -> bool {
+        match env
+            .storage()
+            .persistent()
+            .get::<_, SolverRecord>(&DataKey::Solver(solver))
+        {
+            Some(record) => record.is_active && record.bond_amount >= MIN_BOND,
+            None => false,
+        }
+    }
+
     pub fn get_fee_recipient(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::FeeRecipient)
     }
 
-    /// The current admin address.
+    pub fn get_bond_token(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::BondToken)
+    }
+
     pub fn get_admin(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Admin)
     }
