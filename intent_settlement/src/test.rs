@@ -307,6 +307,74 @@ fn deregister_returns_bond() {
 }
 
 #[test]
+fn withdraw_bond_reduces_balance_without_deregistering() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+
+    let withdraw_amount = 100 * 10_000_000;
+    c.withdraw_bond(&ctx.solver, &withdraw_amount);
+
+    let record = c.get_solver(&ctx.solver).unwrap();
+    assert_eq!(record.bond_amount, BOND - withdraw_amount);
+    assert!(record.is_active);
+    assert_eq!(ctx.bond().balance(&ctx.solver), withdraw_amount);
+    assert_eq!(ctx.bond().balance(&ctx.contract_id), BOND - withdraw_amount);
+}
+
+#[test]
+fn withdraw_bond_below_min_bond_fails() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+
+    // BOND is well above MIN_BOND; withdrawing everything but a sliver
+    // would leave less than MIN_BOND behind.
+    let too_much = BOND - MIN_BOND + 1;
+    let res = c.try_withdraw_bond(&ctx.solver, &too_much);
+    assert_eq!(res, Err(Ok(Error::SolverBondTooLow.into())));
+}
+
+#[test]
+fn withdraw_bond_more_than_balance_fails() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+
+    let res = c.try_withdraw_bond(&ctx.solver, &(BOND + 1));
+    assert_eq!(res, Err(Ok(Error::InsufficientBond.into())));
+}
+
+#[test]
+fn withdraw_bond_zero_amount_fails() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+
+    let res = c.try_withdraw_bond(&ctx.solver, &0);
+    assert_eq!(res, Err(Ok(Error::ZeroAmount.into())));
+}
+
+#[test]
+fn withdraw_bond_allowed_with_active_intent_if_still_above_minimum() {
+    // Partial withdrawal doesn't require active_intents == 0 -- only full
+    // deregistration does -- as long as the remaining bond still clears
+    // MIN_BOND, the solver stays adequately collateralized.
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    let withdraw_amount = 100 * 10_000_000;
+    c.withdraw_bond(&ctx.solver, &withdraw_amount);
+    assert_eq!(
+        c.get_solver(&ctx.solver).unwrap().bond_amount,
+        BOND - withdraw_amount
+    );
+}
+
+#[test]
 fn deregister_with_accepted_intent_fails() {
     let ctx = setup();
     ctx.register_solver();
