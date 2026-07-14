@@ -438,6 +438,68 @@ fn submit_intent_creates_open_record() {
 }
 
 #[test]
+fn dst_allowlist_disabled_by_default_allows_any_token() {
+    let ctx = setup();
+    assert!(!ctx.client().is_dst_allowlist_enabled());
+    assert!(!ctx.client().is_dst_token_allowed(&ctx.dst_token));
+
+    // Submission succeeds even though the token was never explicitly allowed.
+    ctx.submit();
+}
+
+#[test]
+fn dst_allowlist_blocks_unlisted_token_once_enabled() {
+    let ctx = setup();
+    let c = ctx.client();
+    c.set_dst_allowlist_enabled(&true);
+
+    let deadline: Option<u64> = None;
+    let res = c.try_submit_intent(
+        &ctx.user,
+        &String::from_str(&ctx.env, "ethereum"),
+        &String::from_str(&ctx.env, "0xabc"),
+        &SRC_AMT,
+        &ctx.dst_token,
+        &MIN_DST,
+        &deadline,
+    );
+    assert_eq!(res, Err(Ok(Error::DstTokenNotAllowed.into())));
+}
+
+#[test]
+fn dst_allowlist_allows_listed_token_once_enabled() {
+    let ctx = setup();
+    let c = ctx.client();
+    c.add_allowed_dst_token(&ctx.dst_token);
+    c.set_dst_allowlist_enabled(&true);
+
+    assert!(c.is_dst_token_allowed(&ctx.dst_token));
+    ctx.submit();
+}
+
+#[test]
+fn dst_allowlist_removal_blocks_previously_allowed_token() {
+    let ctx = setup();
+    let c = ctx.client();
+    c.add_allowed_dst_token(&ctx.dst_token);
+    c.set_dst_allowlist_enabled(&true);
+    c.remove_allowed_dst_token(&ctx.dst_token);
+
+    assert!(!c.is_dst_token_allowed(&ctx.dst_token));
+    let deadline: Option<u64> = None;
+    let res = c.try_submit_intent(
+        &ctx.user,
+        &String::from_str(&ctx.env, "ethereum"),
+        &String::from_str(&ctx.env, "0xabc"),
+        &SRC_AMT,
+        &ctx.dst_token,
+        &MIN_DST,
+        &deadline,
+    );
+    assert_eq!(res, Err(Ok(Error::DstTokenNotAllowed.into())));
+}
+
+#[test]
 fn submit_intent_zero_amount_fails() {
     let ctx = setup();
     let deadline: Option<u64> = None;
