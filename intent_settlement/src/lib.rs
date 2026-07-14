@@ -132,6 +132,7 @@ pub enum Error {
     ContractPaused = 18,
     DeadlineNotReached = 19,
     InsufficientBond = 20,
+    DstTokenNotAllowed = 21,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
