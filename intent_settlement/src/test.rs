@@ -431,6 +431,37 @@ fn cannot_slash_unaccepted_intent() {
     assert_eq!(res, Err(Ok(Error::IntentNotAccepted.into())));
 }
 
+// ─── Storage TTL ────────────────────────────────────────────────────────────────
+
+#[test]
+fn writes_extend_persistent_ttl_for_intent_and_solver() {
+    use soroban_sdk::testutils::storage::Persistent as _;
+
+    let ctx = setup();
+    ctx.register_solver();
+    let id = ctx.submit();
+    ctx.client().accept_intent(&ctx.solver, &id);
+
+    let (intent_ttl, solver_ttl) = ctx.env.as_contract(&ctx.contract_id, || {
+        (
+            ctx.env
+                .storage()
+                .persistent()
+                .get_ttl(&crate::DataKey::Intent(id)),
+            ctx.env
+                .storage()
+                .persistent()
+                .get_ttl(&crate::DataKey::Solver(ctx.solver.clone())),
+        )
+    });
+
+    // Both entries were touched by register_solver/accept_intent, so both
+    // should be bumped out near PERSISTENT_TTL_EXTEND_TO rather than sitting
+    // at whatever short default the test ledger starts new entries at.
+    assert!(intent_ttl >= crate::PERSISTENT_TTL_EXTEND_TO - 1);
+    assert!(solver_ttl >= crate::PERSISTENT_TTL_EXTEND_TO - 1);
+}
+
 // ─── Views ──────────────────────────────────────────────────────────────────────
 
 #[test]
