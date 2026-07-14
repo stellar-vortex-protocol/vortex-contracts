@@ -483,6 +483,52 @@ fn slash_after_window_penalizes_solver_and_reopens_intent() {
 }
 
 #[test]
+fn slash_below_min_bond_deactivates_solver() {
+    let ctx = setup();
+    let c = ctx.client();
+
+    // Register with just enough over MIN_BOND that a single 10% slash drops
+    // the remaining bond below it.
+    let thin_bond = MIN_BOND + MIN_BOND / 10;
+    ctx.bond_admin().mint(&ctx.solver, &thin_bond);
+    c.register_solver(&ctx.solver, &thin_bond);
+
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+
+    let solver = c.get_solver(&ctx.solver).unwrap();
+    assert!(solver.bond_amount < MIN_BOND);
+    assert!(!solver.is_active);
+
+    // Deactivated solvers can't accept new intents.
+    let id2 = ctx.submit();
+    let res = c.try_accept_intent(&ctx.solver, &id2);
+    assert_eq!(res, Err(Ok(Error::SolverInactive.into())));
+}
+
+#[test]
+fn topping_up_after_slash_reactivates_solver() {
+    let ctx = setup();
+    let c = ctx.client();
+
+    let thin_bond = MIN_BOND + MIN_BOND / 10;
+    ctx.bond_admin().mint(&ctx.solver, &thin_bond);
+    c.register_solver(&ctx.solver, &thin_bond);
+
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+    assert!(!c.get_solver(&ctx.solver).unwrap().is_active);
+
+    ctx.bond_admin().mint(&ctx.solver, &MIN_BOND);
+    c.register_solver(&ctx.solver, &MIN_BOND);
+    assert!(c.get_solver(&ctx.solver).unwrap().is_active);
+}
+
+#[test]
 fn cannot_slash_before_window_expires() {
     let ctx = setup();
     ctx.register_solver();

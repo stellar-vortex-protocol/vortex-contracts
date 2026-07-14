@@ -494,6 +494,12 @@ impl IntentSettlement {
         solver_record.fills_failed += 1;
         solver_record.active_intents = solver_record.active_intents.saturating_sub(1);
 
+        // A solver whose bond no longer covers MIN_BOND can't credibly back
+        // further fills -- take them out of rotation until they top back up.
+        if solver_record.bond_amount < MIN_BOND {
+            solver_record.is_active = false;
+        }
+
         // Re-open the intent
         intent.state = IntentState::Open;
         intent.solver = None;
