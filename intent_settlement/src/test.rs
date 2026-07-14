@@ -462,6 +462,20 @@ fn writes_extend_persistent_ttl_for_intent_and_solver() {
     assert!(solver_ttl >= crate::PERSISTENT_TTL_EXTEND_TO - 1);
 }
 
+#[test]
+fn state_changing_calls_extend_instance_ttl() {
+    use soroban_sdk::testutils::storage::Instance as _;
+
+    let ctx = setup();
+    ctx.register_solver();
+
+    let instance_ttl = ctx
+        .env
+        .as_contract(&ctx.contract_id, || ctx.env.storage().instance().get_ttl());
+
+    assert!(instance_ttl >= crate::INSTANCE_TTL_EXTEND_TO - 1);
+}
+
 // ─── Views ──────────────────────────────────────────────────────────────────────
 
 #[test]
