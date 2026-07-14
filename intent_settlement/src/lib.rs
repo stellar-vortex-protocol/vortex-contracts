@@ -261,12 +261,14 @@ impl IntentSettlement {
         env.events().publish((Symbol::new(&env, "paused"),), true);
     }
 
+    /// Admin-only: lift a pause and restore normal operation.
     pub fn unpause(env: Env) {
         Self::require_admin(&env);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.events().publish((Symbol::new(&env, "paused"),), false);
     }
 
+    /// Whether submit_intent/accept_intent/fill_intent are currently halted.
     pub fn is_paused(env: Env) -> bool {
         env.storage()
             .instance()
@@ -792,10 +794,12 @@ impl IntentSettlement {
 
     // ── Views ─────────────────────────────────────────────────────────────────
 
+    /// Fetch an intent's full record by id, or None if it was never submitted.
     pub fn get_intent(env: Env, intent_id: BytesN<32>) -> Option<IntentRecord> {
         env.storage().persistent().get(&DataKey::Intent(intent_id))
     }
 
+    /// Fetch a solver's full record by address, or None if never registered.
     pub fn get_solver(env: Env, solver: Address) -> Option<SolverRecord> {
         env.storage().persistent().get(&DataKey::Solver(solver))
     }
@@ -827,6 +831,7 @@ impl IntentSettlement {
         env.storage().instance().get(&DataKey::Admin)
     }
 
+    /// (total intents ever submitted, total volume ever filled).
     pub fn get_stats(env: Env) -> (u64, i128) {
         let intents: u64 = env
             .storage()
