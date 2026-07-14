@@ -181,6 +181,53 @@ fn deregister_returns_bond() {
     assert_eq!(ctx.bond().balance(&ctx.contract_id), 0);
 }
 
+#[test]
+fn deregister_with_accepted_intent_fails() {
+    let ctx = setup();
+    ctx.register_solver();
+    let id = ctx.submit();
+    ctx.client().accept_intent(&ctx.solver, &id);
+
+    let res = ctx.client().try_deregister_solver(&ctx.solver);
+    assert_eq!(res, Err(Ok(Error::SolverHasActiveIntents.into())));
+
+    // Bond stays locked in the contract.
+    assert_eq!(ctx.bond().balance(&ctx.contract_id), BOND);
+}
+
+#[test]
+fn deregister_after_fill_succeeds() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    let fee = FILL * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
+    c.fill_intent(&ctx.solver, &id, &FILL);
+
+    // Obligation cleared on fill, so deregistration now succeeds.
+    c.deregister_solver(&ctx.solver);
+    assert!(c.get_solver(&ctx.solver).is_none());
+}
+
+#[test]
+fn deregister_after_slash_succeeds() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+
+    // Obligation cleared on slash, so deregistration now succeeds.
+    c.deregister_solver(&ctx.solver);
+    assert!(c.get_solver(&ctx.solver).is_none());
+}
+
 // ─── Intent submission ──────────────────────────────────────────────────────────
 
 #[test]
