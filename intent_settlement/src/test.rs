@@ -702,3 +702,9 @@ fn get_intent_returns_none_for_unknown_id() {
     let unknown = BytesN::from_array(&ctx.env, &[0u8; 32]);
     assert!(ctx.client().get_intent(&unknown).is_none());
 }
+
+#[test]
+fn get_bond_token_returns_configured_token() {
+    let ctx = setup();
+    assert_eq!(ctx.client().get_bond_token(), Some(ctx.bond_token.clone()));
+}
