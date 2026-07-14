@@ -133,6 +133,30 @@ fn cannot_initialize_twice() {
     assert_eq!(res, Err(Ok(Error::AlreadyInitialized.into())));
 }
 
+// ─── Admin ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn admin_can_set_fee_recipient() {
+    let ctx = setup();
+    let new_recipient = Address::generate(&ctx.env);
+
+    ctx.client().set_fee_recipient(&new_recipient);
+    assert_eq!(
+        ctx.client().get_fee_recipient(),
+        Some(new_recipient.clone())
+    );
+
+    // The new recipient actually receives fees going forward.
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    let fee = FILL * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
+    c.fill_intent(&ctx.solver, &id, &FILL);
+    assert_eq!(ctx.dst().balance(&new_recipient), fee);
+}
+
 // ─── Solver registration ────────────────────────────────────────────────────────
 
 #[test]

@@ -117,6 +117,7 @@ pub enum Error {
     ZeroAmount = 13,
     InvalidDeadline = 14,
     IntentAlreadyFilled = 15,
+    NotInitialized = 16,
     SolverHasActiveIntents = 16,
 }
 
@@ -143,6 +144,28 @@ impl IntentSettlement {
             .set(&DataKey::BondToken, &bond_token);
         env.storage().instance().set(&DataKey::TotalIntents, &0u64);
         env.storage().instance().set(&DataKey::TotalVolume, &0i128);
+    }
+
+    // ── Admin ──────────────────────────────────────────────────────────────────
+
+    /// Admin-only: rotate the address that receives protocol fees and slashed
+    /// bonds. There's no other way to change this once `initialize` runs.
+    pub fn set_fee_recipient(env: Env, new_fee_recipient: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeRecipient, &new_fee_recipient);
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_recipient_updated"),),
+            new_fee_recipient,
+        );
     }
 
     // ── Solver Management ─────────────────────────────────────────────────────
@@ -558,6 +581,10 @@ impl IntentSettlement {
 
     pub fn get_solver(env: Env, solver: Address) -> Option<SolverRecord> {
         env.storage().persistent().get(&DataKey::Solver(solver))
+    }
+
+    pub fn get_fee_recipient(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::FeeRecipient)
     }
 
     pub fn get_stats(env: Env) -> (u64, i128) {
