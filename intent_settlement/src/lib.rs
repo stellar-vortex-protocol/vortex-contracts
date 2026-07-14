@@ -21,6 +21,13 @@ const FILL_WINDOW: u64 = 300; // 5 minutes to fill after intent accepted
 const MIN_BOND: i128 = 50 * 10_000_000; // 50 USDC minimum solver bond
 const PROTOCOL_FEE_BPS: i128 = 5; // 0.05%
 
+// Soroban archives ledger entries that go too long without being touched.
+// Persistent Intent/Solver records get their TTL bumped on every write so
+// they don't need to be manually restored before later calls can read them.
+const DAY_IN_LEDGERS: u32 = 17280; // ~5s per ledger
+const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 14;
+const PERSISTENT_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 30;
+
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -85,6 +92,9 @@ pub struct SolverRecord {
     pub total_volume: i128,
     pub is_active: bool,
     pub registered_at: u64,
+    /// Number of intents currently Accepted by this solver (not yet filled or slashed).
+    /// Bond stays locked behind these obligations, so it must be zero before deregistration.
+    pub active_intents: u32,
 }
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
@@ -110,6 +120,7 @@ pub enum Error {
     IntentAlreadyFilled = 15,
     NotInitialized = 16,
     ContractPaused = 17,
+    SolverHasActiveIntents = 16,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -160,26 +171,71 @@ impl IntentSettlement {
             .instance()
             .get(&DataKey::Paused)
             .unwrap_or(false)
+    // ── Admin ──────────────────────────────────────────────────────────────────
+
+    /// Admin-only: rotate the address that receives protocol fees and slashed
+    /// bonds. There's no other way to change this once `initialize` runs.
+    pub fn set_fee_recipient(env: Env, new_fee_recipient: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeRecipient, &new_fee_recipient);
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_recipient_updated"),),
+            new_fee_recipient,
+        );
+    }
+
+    /// Admin-only: transfer the admin role to a new address. The new admin
+    /// must authorize too, so a typo'd address can't accidentally brick
+    /// admin control of the contract.
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        new_admin.require_auth();
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+
+        env.events()
+            .publish((Symbol::new(&env, "admin_transferred"),), new_admin);
     }
 
     // ── Solver Management ─────────────────────────────────────────────────────
 
-    /// Solvers register by depositing a USDC bond
+    /// Solvers register by depositing a USDC bond. Existing solvers may top up
+    /// with any positive amount -- the minimum is enforced on the resulting
+    /// total, not on each individual deposit.
     pub fn register_solver(env: Env, solver: Address, bond_amount: i128) {
         solver.require_auth();
 
-        if bond_amount < MIN_BOND {
+        if bond_amount <= 0 {
+            panic_with_error!(&env, Error::ZeroAmount);
+        }
+
+        let existing: Option<SolverRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Solver(solver.clone()));
+
+        let existing_bond = existing.as_ref().map(|s| s.bond_amount).unwrap_or(0);
+        if existing_bond + bond_amount < MIN_BOND {
             panic_with_error!(&env, Error::SolverBondTooLow);
         }
 
         let bond_token: Address = env.storage().instance().get(&DataKey::BondToken).unwrap();
         let client = token::Client::new(&env, &bond_token);
         client.transfer(&solver, &env.current_contract_address(), &bond_amount);
-
-        let existing: Option<SolverRecord> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Solver(solver.clone()));
 
         let record = match existing {
             Some(mut s) => {
@@ -195,12 +251,14 @@ impl IntentSettlement {
                 total_volume: 0,
                 is_active: true,
                 registered_at: env.ledger().timestamp(),
+                active_intents: 0,
             },
         };
 
         env.storage()
             .persistent()
             .set(&DataKey::Solver(solver.clone()), &record);
+        Self::bump_solver_ttl(&env, &solver);
 
         env.events().publish(
             (Symbol::new(&env, "solver_registered"), solver),
@@ -216,6 +274,10 @@ impl IntentSettlement {
             .persistent()
             .get(&DataKey::Solver(solver.clone()))
             .unwrap_or_else(|| panic_with_error!(&env, Error::SolverNotRegistered));
+
+        if record.active_intents > 0 {
+            panic_with_error!(&env, Error::SolverHasActiveIntents);
+        }
 
         // Return bond
         if record.bond_amount > 0 {
@@ -289,6 +351,7 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         let total: u64 = env
             .storage()
@@ -312,7 +375,7 @@ impl IntentSettlement {
         solver.require_auth();
         Self::require_not_paused(&env);
 
-        let solver_record: SolverRecord = env
+        let mut solver_record: SolverRecord = env
             .storage()
             .persistent()
             .get(&DataKey::Solver(solver.clone()))
@@ -333,7 +396,8 @@ impl IntentSettlement {
             intent.state = IntentState::Expired;
             env.storage()
                 .persistent()
-                .set(&DataKey::Intent(intent_id), &intent);
+                .set(&DataKey::Intent(intent_id.clone()), &intent);
+            Self::bump_intent_ttl(&env, &intent_id);
             panic_with_error!(&env, Error::IntentExpired);
         }
 
@@ -346,9 +410,15 @@ impl IntentSettlement {
         // Extend deadline to fill window from now
         intent.deadline = now + FILL_WINDOW;
 
+        solver_record.active_intents += 1;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Solver(solver.clone()), &solver_record);
+
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         env.events().publish(
             (Symbol::new(&env, "intent_accepted"), solver),
@@ -417,9 +487,11 @@ impl IntentSettlement {
             .unwrap();
         solver_record.fills_completed += 1;
         solver_record.total_volume += fill_amount;
+        solver_record.active_intents = solver_record.active_intents.saturating_sub(1);
         env.storage()
             .persistent()
             .set(&DataKey::Solver(solver.clone()), &solver_record);
+        Self::bump_solver_ttl(&env, &solver);
 
         // Update protocol stats
         let total_vol: i128 = env
@@ -434,6 +506,7 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         env.events().publish(
             (Symbol::new(&env, "intent_filled"), solver),
@@ -467,6 +540,7 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         env.events()
             .publish((Symbol::new(&env, "intent_cancelled"), user), intent_id);
@@ -501,6 +575,13 @@ impl IntentSettlement {
         let slash_amount = solver_record.bond_amount / 10;
         solver_record.bond_amount -= slash_amount;
         solver_record.fills_failed += 1;
+        solver_record.active_intents = solver_record.active_intents.saturating_sub(1);
+
+        // A solver whose bond no longer covers MIN_BOND can't credibly back
+        // further fills -- take them out of rotation until they top back up.
+        if solver_record.bond_amount < MIN_BOND {
+            solver_record.is_active = false;
+        }
 
         // Re-open the intent
         intent.state = IntentState::Open;
@@ -526,9 +607,11 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Solver(solver_addr.clone()), &solver_record);
+        Self::bump_solver_ttl(&env, &solver_addr);
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         env.events().publish(
             (Symbol::new(&env, "solver_slashed"), solver_addr),
@@ -544,6 +627,14 @@ impl IntentSettlement {
 
     pub fn get_solver(env: Env, solver: Address) -> Option<SolverRecord> {
         env.storage().persistent().get(&DataKey::Solver(solver))
+    }
+
+    pub fn get_fee_recipient(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::FeeRecipient)
+    }
+
+    pub fn get_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Admin)
     }
 
     pub fn get_stats(env: Env) -> (u64, i128) {
@@ -575,6 +666,20 @@ impl IntentSettlement {
         if Self::is_paused(env.clone()) {
             panic_with_error!(env, Error::ContractPaused);
         }
+    fn bump_intent_ttl(env: &Env, intent_id: &BytesN<32>) {
+        env.storage().persistent().extend_ttl(
+            &DataKey::Intent(intent_id.clone()),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
+    }
+
+    fn bump_solver_ttl(env: &Env, solver: &Address) {
+        env.storage().persistent().extend_ttl(
+            &DataKey::Solver(solver.clone()),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
     }
 
     fn compute_intent_id(

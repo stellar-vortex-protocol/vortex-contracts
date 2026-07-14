@@ -193,6 +193,43 @@ fn pause_does_not_block_slashing_an_already_accepted_intent() {
     // can't dodge accountability for an obligation they already took on.
     c.slash_solver(&id);
     assert_eq!(c.get_solver(&ctx.solver).unwrap().fills_failed, 1);
+// ─── Admin ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn admin_can_set_fee_recipient() {
+    let ctx = setup();
+    let new_recipient = Address::generate(&ctx.env);
+
+    ctx.client().set_fee_recipient(&new_recipient);
+    assert_eq!(
+        ctx.client().get_fee_recipient(),
+        Some(new_recipient.clone())
+    );
+
+    // The new recipient actually receives fees going forward.
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    let fee = FILL * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
+    c.fill_intent(&ctx.solver, &id, &FILL);
+    assert_eq!(ctx.dst().balance(&new_recipient), fee);
+}
+
+#[test]
+fn admin_can_transfer_admin() {
+    let ctx = setup();
+    assert_eq!(ctx.client().get_admin(), Some(ctx.admin.clone()));
+
+    let new_admin = Address::generate(&ctx.env);
+    ctx.client().transfer_admin(&new_admin);
+    assert_eq!(ctx.client().get_admin(), Some(new_admin.clone()));
+
+    // The new admin can now exercise admin-only functions.
+    let another_recipient = Address::generate(&ctx.env);
+    ctx.client().set_fee_recipient(&another_recipient);
+    assert_eq!(ctx.client().get_fee_recipient(), Some(another_recipient));
 }
 
 // ─── Solver registration ────────────────────────────────────────────────────────
@@ -233,6 +270,30 @@ fn register_solver_twice_tops_up_bond() {
 }
 
 #[test]
+fn register_solver_small_topup_below_minimum_succeeds() {
+    // A solver already above MIN_BOND should be able to top up by less than
+    // MIN_BOND -- the minimum applies to the resulting total, not the deposit.
+    let ctx = setup();
+    let small_topup = 10 * 10_000_000; // less than MIN_BOND on its own
+    ctx.bond_admin().mint(&ctx.solver, &(BOND + small_topup));
+    let c = ctx.client();
+    c.register_solver(&ctx.solver, &BOND);
+    c.register_solver(&ctx.solver, &small_topup);
+    assert_eq!(
+        c.get_solver(&ctx.solver).unwrap().bond_amount,
+        BOND + small_topup
+    );
+}
+
+#[test]
+fn register_solver_zero_amount_fails() {
+    let ctx = setup();
+    ctx.register_solver();
+    let res = ctx.client().try_register_solver(&ctx.solver, &0);
+    assert_eq!(res, Err(Ok(Error::ZeroAmount.into())));
+}
+
+#[test]
 fn deregister_returns_bond() {
     let ctx = setup();
     ctx.register_solver();
@@ -241,6 +302,53 @@ fn deregister_returns_bond() {
     assert!(ctx.client().get_solver(&ctx.solver).is_none());
     assert_eq!(ctx.bond().balance(&ctx.solver), BOND);
     assert_eq!(ctx.bond().balance(&ctx.contract_id), 0);
+}
+
+#[test]
+fn deregister_with_accepted_intent_fails() {
+    let ctx = setup();
+    ctx.register_solver();
+    let id = ctx.submit();
+    ctx.client().accept_intent(&ctx.solver, &id);
+
+    let res = ctx.client().try_deregister_solver(&ctx.solver);
+    assert_eq!(res, Err(Ok(Error::SolverHasActiveIntents.into())));
+
+    // Bond stays locked in the contract.
+    assert_eq!(ctx.bond().balance(&ctx.contract_id), BOND);
+}
+
+#[test]
+fn deregister_after_fill_succeeds() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    let fee = FILL * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
+    c.fill_intent(&ctx.solver, &id, &FILL);
+
+    // Obligation cleared on fill, so deregistration now succeeds.
+    c.deregister_solver(&ctx.solver);
+    assert!(c.get_solver(&ctx.solver).is_none());
+}
+
+#[test]
+fn deregister_after_slash_succeeds() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+
+    // Obligation cleared on slash, so deregistration now succeeds.
+    c.deregister_solver(&ctx.solver);
+    assert!(c.get_solver(&ctx.solver).is_none());
 }
 
 // ─── Intent submission ──────────────────────────────────────────────────────────
@@ -474,6 +582,52 @@ fn slash_after_window_penalizes_solver_and_reopens_intent() {
 }
 
 #[test]
+fn slash_below_min_bond_deactivates_solver() {
+    let ctx = setup();
+    let c = ctx.client();
+
+    // Register with just enough over MIN_BOND that a single 10% slash drops
+    // the remaining bond below it.
+    let thin_bond = MIN_BOND + MIN_BOND / 10;
+    ctx.bond_admin().mint(&ctx.solver, &thin_bond);
+    c.register_solver(&ctx.solver, &thin_bond);
+
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+
+    let solver = c.get_solver(&ctx.solver).unwrap();
+    assert!(solver.bond_amount < MIN_BOND);
+    assert!(!solver.is_active);
+
+    // Deactivated solvers can't accept new intents.
+    let id2 = ctx.submit();
+    let res = c.try_accept_intent(&ctx.solver, &id2);
+    assert_eq!(res, Err(Ok(Error::SolverInactive.into())));
+}
+
+#[test]
+fn topping_up_after_slash_reactivates_solver() {
+    let ctx = setup();
+    let c = ctx.client();
+
+    let thin_bond = MIN_BOND + MIN_BOND / 10;
+    ctx.bond_admin().mint(&ctx.solver, &thin_bond);
+    c.register_solver(&ctx.solver, &thin_bond);
+
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+    assert!(!c.get_solver(&ctx.solver).unwrap().is_active);
+
+    ctx.bond_admin().mint(&ctx.solver, &MIN_BOND);
+    c.register_solver(&ctx.solver, &MIN_BOND);
+    assert!(c.get_solver(&ctx.solver).unwrap().is_active);
+}
+
+#[test]
 fn cannot_slash_before_window_expires() {
     let ctx = setup();
     ctx.register_solver();
@@ -491,6 +645,37 @@ fn cannot_slash_unaccepted_intent() {
     let id = ctx.submit(); // still Open, never accepted
     let res = ctx.client().try_slash_solver(&id);
     assert_eq!(res, Err(Ok(Error::IntentNotAccepted.into())));
+}
+
+// ─── Storage TTL ────────────────────────────────────────────────────────────────
+
+#[test]
+fn writes_extend_persistent_ttl_for_intent_and_solver() {
+    use soroban_sdk::testutils::storage::Persistent as _;
+
+    let ctx = setup();
+    ctx.register_solver();
+    let id = ctx.submit();
+    ctx.client().accept_intent(&ctx.solver, &id);
+
+    let (intent_ttl, solver_ttl) = ctx.env.as_contract(&ctx.contract_id, || {
+        (
+            ctx.env
+                .storage()
+                .persistent()
+                .get_ttl(&crate::DataKey::Intent(id)),
+            ctx.env
+                .storage()
+                .persistent()
+                .get_ttl(&crate::DataKey::Solver(ctx.solver.clone())),
+        )
+    });
+
+    // Both entries were touched by register_solver/accept_intent, so both
+    // should be bumped out near PERSISTENT_TTL_EXTEND_TO rather than sitting
+    // at whatever short default the test ledger starts new entries at.
+    assert!(intent_ttl >= crate::PERSISTENT_TTL_EXTEND_TO - 1);
+    assert!(solver_ttl >= crate::PERSISTENT_TTL_EXTEND_TO - 1);
 }
 
 // ─── Views ──────────────────────────────────────────────────────────────────────
