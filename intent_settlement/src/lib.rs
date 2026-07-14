@@ -21,6 +21,13 @@ const FILL_WINDOW: u64 = 300; // 5 minutes to fill after intent accepted
 const MIN_BOND: i128 = 50 * 10_000_000; // 50 USDC minimum solver bond
 const PROTOCOL_FEE_BPS: i128 = 5; // 0.05%
 
+// Soroban archives ledger entries that go too long without being touched.
+// Persistent Intent/Solver records get their TTL bumped on every write so
+// they don't need to be manually restored before later calls can read them.
+const DAY_IN_LEDGERS: u32 = 17280; // ~5s per ledger
+const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 14;
+const PERSISTENT_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 30;
+
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -185,6 +192,7 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Solver(solver.clone()), &record);
+        Self::bump_solver_ttl(&env, &solver);
 
         env.events().publish(
             (Symbol::new(&env, "solver_registered"), solver),
@@ -276,6 +284,7 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         let total: u64 = env
             .storage()
@@ -319,7 +328,8 @@ impl IntentSettlement {
             intent.state = IntentState::Expired;
             env.storage()
                 .persistent()
-                .set(&DataKey::Intent(intent_id), &intent);
+                .set(&DataKey::Intent(intent_id.clone()), &intent);
+            Self::bump_intent_ttl(&env, &intent_id);
             panic_with_error!(&env, Error::IntentExpired);
         }
 
@@ -340,6 +350,7 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         env.events().publish(
             (Symbol::new(&env, "intent_accepted"), solver),
@@ -411,6 +422,7 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Solver(solver.clone()), &solver_record);
+        Self::bump_solver_ttl(&env, &solver);
 
         // Update protocol stats
         let total_vol: i128 = env
@@ -425,6 +437,7 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         env.events().publish(
             (Symbol::new(&env, "intent_filled"), solver),
@@ -458,6 +471,7 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         env.events()
             .publish((Symbol::new(&env, "intent_cancelled"), user), intent_id);
@@ -524,9 +538,11 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .set(&DataKey::Solver(solver_addr.clone()), &solver_record);
+        Self::bump_solver_ttl(&env, &solver_addr);
         env.storage()
             .persistent()
             .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
 
         env.events().publish(
             (Symbol::new(&env, "solver_slashed"), solver_addr),
@@ -559,6 +575,22 @@ impl IntentSettlement {
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
+
+    fn bump_intent_ttl(env: &Env, intent_id: &BytesN<32>) {
+        env.storage().persistent().extend_ttl(
+            &DataKey::Intent(intent_id.clone()),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
+    }
+
+    fn bump_solver_ttl(env: &Env, solver: &Address) {
+        env.storage().persistent().extend_ttl(
+            &DataKey::Solver(solver.clone()),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
+    }
 
     fn compute_intent_id(
         env: &Env,
