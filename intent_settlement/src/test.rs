@@ -307,6 +307,34 @@ fn deregister_returns_bond() {
 }
 
 #[test]
+fn solver_count_tracks_registration_and_deregistration() {
+    let ctx = setup();
+    let c = ctx.client();
+    assert_eq!(c.get_solver_count(), 0);
+
+    ctx.register_solver();
+    assert_eq!(c.get_solver_count(), 1);
+
+    let other = Address::generate(&ctx.env);
+    ctx.bond_admin().mint(&other, &BOND);
+    c.register_solver(&other, &BOND);
+    assert_eq!(c.get_solver_count(), 2);
+
+    c.deregister_solver(&ctx.solver);
+    assert_eq!(c.get_solver_count(), 1);
+}
+
+#[test]
+fn solver_count_unaffected_by_top_up() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.bond_admin().mint(&ctx.solver, &(BOND * 2));
+    c.register_solver(&ctx.solver, &BOND);
+    c.register_solver(&ctx.solver, &BOND);
+    assert_eq!(c.get_solver_count(), 1);
+}
+
+#[test]
 fn deregister_with_accepted_intent_fails() {
     let ctx = setup();
     ctx.register_solver();
