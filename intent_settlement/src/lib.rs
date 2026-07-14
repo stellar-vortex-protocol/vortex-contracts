@@ -46,6 +46,7 @@ pub enum DataKey {
     Solver(Address),    // address -> SolverRecord
     TotalIntents,
     TotalVolume,
+    TotalSolvers,
     Paused,
 }
 
@@ -154,6 +155,7 @@ impl IntentSettlement {
             .set(&DataKey::BondToken, &bond_token);
         env.storage().instance().set(&DataKey::TotalIntents, &0u64);
         env.storage().instance().set(&DataKey::TotalVolume, &0i128);
+        env.storage().instance().set(&DataKey::TotalSolvers, &0u32);
         Self::bump_instance_ttl(&env);
     }
 
@@ -245,6 +247,8 @@ impl IntentSettlement {
             panic_with_error!(&env, Error::SolverBondTooLow);
         }
 
+        let is_new_solver = existing.is_none();
+
         let bond_token: Address = env.storage().instance().get(&DataKey::BondToken).unwrap();
         let client = token::Client::new(&env, &bond_token);
         client.transfer(&solver, &env.current_contract_address(), &bond_amount);
@@ -271,6 +275,17 @@ impl IntentSettlement {
             .persistent()
             .set(&DataKey::Solver(solver.clone()), &record);
         Self::bump_solver_ttl(&env, &solver);
+
+        if is_new_solver {
+            let total: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::TotalSolvers)
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&DataKey::TotalSolvers, &(total + 1));
+        }
 
         env.events().publish(
             (Symbol::new(&env, "solver_registered"), solver),
@@ -306,6 +321,15 @@ impl IntentSettlement {
         env.storage()
             .persistent()
             .remove(&DataKey::Solver(solver.clone()));
+
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalSolvers)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalSolvers, &total.saturating_sub(1));
 
         env.events().publish(
             (Symbol::new(&env, "solver_deregistered"), solver),
