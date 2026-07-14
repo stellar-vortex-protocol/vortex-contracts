@@ -168,6 +168,24 @@ impl IntentSettlement {
         );
     }
 
+    /// Admin-only: transfer the admin role to a new address. The new admin
+    /// must authorize too, so a typo'd address can't accidentally brick
+    /// admin control of the contract.
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        new_admin.require_auth();
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+
+        env.events()
+            .publish((Symbol::new(&env, "admin_transferred"),), new_admin);
+    }
+
     // ── Solver Management ─────────────────────────────────────────────────────
 
     /// Solvers register by depositing a USDC bond. Existing solvers may top up
@@ -585,6 +603,10 @@ impl IntentSettlement {
 
     pub fn get_fee_recipient(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::FeeRecipient)
+    }
+
+    pub fn get_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Admin)
     }
 
     pub fn get_stats(env: Env) -> (u64, i128) {
