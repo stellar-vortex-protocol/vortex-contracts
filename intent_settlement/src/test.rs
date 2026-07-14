@@ -649,6 +649,51 @@ fn cannot_slash_unaccepted_intent() {
     assert_eq!(res, Err(Ok(Error::IntentNotAccepted.into())));
 }
 
+// ─── Expiry ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn expire_intent_marks_open_intent_expired_after_deadline() {
+    let ctx = setup();
+    let c = ctx.client();
+    let id = ctx.submit();
+
+    ctx.pass_time(INTENT_EXPIRY + 1);
+    c.expire_intent(&id);
+
+    assert!(c.get_intent(&id).unwrap().state == IntentState::Expired);
+}
+
+#[test]
+fn expire_intent_before_deadline_fails() {
+    let ctx = setup();
+    let c = ctx.client();
+    let id = ctx.submit();
+
+    let res = c.try_expire_intent(&id);
+    assert_eq!(res, Err(Ok(Error::DeadlineNotReached.into())));
+}
+
+#[test]
+fn expire_intent_on_accepted_intent_fails() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    ctx.pass_time(FILL_WINDOW + 1);
+    let res = c.try_expire_intent(&id);
+    assert_eq!(res, Err(Ok(Error::IntentNotOpen.into())));
+}
+
+#[test]
+fn expire_intent_unknown_id_fails() {
+    let ctx = setup();
+    let unknown = BytesN::from_array(&ctx.env, &[0u8; 32]);
+    let res = ctx.client().try_expire_intent(&unknown);
+    assert_eq!(res, Err(Ok(Error::IntentNotFound.into())));
+}
+
 // ─── Storage TTL ────────────────────────────────────────────────────────────────
 
 #[test]
