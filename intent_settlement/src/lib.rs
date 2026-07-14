@@ -28,6 +28,12 @@ const DAY_IN_LEDGERS: u32 = 17280; // ~5s per ledger
 const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 14;
 const PERSISTENT_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 30;
 
+// The contract instance entry (Admin/FeeRecipient/BondToken/TotalIntents/
+// TotalVolume, plus the contract's own code) is a single ledger entry and
+// needs the same treatment, or the whole contract becomes unreachable.
+const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 60;
+
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -139,6 +145,7 @@ impl IntentSettlement {
             .set(&DataKey::BondToken, &bond_token);
         env.storage().instance().set(&DataKey::TotalIntents, &0u64);
         env.storage().instance().set(&DataKey::TotalVolume, &0i128);
+        Self::bump_instance_ttl(&env);
     }
 
     // ── Solver Management ─────────────────────────────────────────────────────
@@ -146,6 +153,7 @@ impl IntentSettlement {
     /// Solvers register by depositing a USDC bond
     pub fn register_solver(env: Env, solver: Address, bond_amount: i128) {
         solver.require_auth();
+        Self::bump_instance_ttl(&env);
 
         if bond_amount < MIN_BOND {
             panic_with_error!(&env, Error::SolverBondTooLow);
@@ -190,6 +198,7 @@ impl IntentSettlement {
 
     pub fn deregister_solver(env: Env, solver: Address) {
         solver.require_auth();
+        Self::bump_instance_ttl(&env);
 
         let record: SolverRecord = env
             .storage()
@@ -234,6 +243,7 @@ impl IntentSettlement {
         deadline: Option<u64>,
     ) -> BytesN<32> {
         user.require_auth();
+        Self::bump_instance_ttl(&env);
 
         if src_amount <= 0 || min_dst_amount <= 0 {
             panic_with_error!(&env, Error::ZeroAmount);
@@ -290,6 +300,7 @@ impl IntentSettlement {
     /// Solver claims an intent (exclusive fill right for FILL_WINDOW seconds)
     pub fn accept_intent(env: Env, solver: Address, intent_id: BytesN<32>) {
         solver.require_auth();
+        Self::bump_instance_ttl(&env);
 
         let solver_record: SolverRecord = env
             .storage()
@@ -341,6 +352,7 @@ impl IntentSettlement {
     /// The solver provides cross-chain proof (stored off-chain; on-chain we trust solver's bond)
     pub fn fill_intent(env: Env, solver: Address, intent_id: BytesN<32>, fill_amount: i128) {
         solver.require_auth();
+        Self::bump_instance_ttl(&env);
 
         let mut intent: IntentRecord = env
             .storage()
@@ -426,6 +438,7 @@ impl IntentSettlement {
     /// User can cancel an Open intent (not yet accepted)
     pub fn cancel_intent(env: Env, user: Address, intent_id: BytesN<32>) {
         user.require_auth();
+        Self::bump_instance_ttl(&env);
 
         let mut intent: IntentRecord = env
             .storage()
@@ -457,6 +470,8 @@ impl IntentSettlement {
 
     /// Permissionless: slash a solver that accepted but didn't fill within FILL_WINDOW
     pub fn slash_solver(env: Env, intent_id: BytesN<32>) {
+        Self::bump_instance_ttl(&env);
+
         let mut intent: IntentRecord = env
             .storage()
             .persistent()
@@ -546,6 +561,12 @@ impl IntentSettlement {
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
+
+    fn bump_instance_ttl(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    }
 
     fn bump_intent_ttl(env: &Env, intent_id: &BytesN<32>) {
         env.storage().persistent().extend_ttl(
