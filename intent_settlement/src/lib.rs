@@ -84,6 +84,9 @@ pub struct SolverRecord {
     pub total_volume: i128,
     pub is_active: bool,
     pub registered_at: u64,
+    /// Number of intents currently Accepted by this solver (not yet filled or slashed).
+    /// Bond stays locked behind these obligations, so it must be zero before deregistration.
+    pub active_intents: u32,
 }
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
@@ -107,6 +110,7 @@ pub enum Error {
     ZeroAmount = 13,
     InvalidDeadline = 14,
     IntentAlreadyFilled = 15,
+    SolverHasActiveIntents = 16,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -167,6 +171,7 @@ impl IntentSettlement {
                 total_volume: 0,
                 is_active: true,
                 registered_at: env.ledger().timestamp(),
+                active_intents: 0,
             },
         };
 
@@ -188,6 +193,10 @@ impl IntentSettlement {
             .persistent()
             .get(&DataKey::Solver(solver.clone()))
             .unwrap_or_else(|| panic_with_error!(&env, Error::SolverNotRegistered));
+
+        if record.active_intents > 0 {
+            panic_with_error!(&env, Error::SolverHasActiveIntents);
+        }
 
         // Return bond
         if record.bond_amount > 0 {
@@ -282,7 +291,7 @@ impl IntentSettlement {
     pub fn accept_intent(env: Env, solver: Address, intent_id: BytesN<32>) {
         solver.require_auth();
 
-        let solver_record: SolverRecord = env
+        let mut solver_record: SolverRecord = env
             .storage()
             .persistent()
             .get(&DataKey::Solver(solver.clone()))
@@ -315,6 +324,11 @@ impl IntentSettlement {
         intent.state = IntentState::Accepted;
         // Extend deadline to fill window from now
         intent.deadline = now + FILL_WINDOW;
+
+        solver_record.active_intents += 1;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Solver(solver.clone()), &solver_record);
 
         env.storage()
             .persistent()
@@ -386,6 +400,7 @@ impl IntentSettlement {
             .unwrap();
         solver_record.fills_completed += 1;
         solver_record.total_volume += fill_amount;
+        solver_record.active_intents = solver_record.active_intents.saturating_sub(1);
         env.storage()
             .persistent()
             .set(&DataKey::Solver(solver.clone()), &solver_record);
@@ -470,6 +485,7 @@ impl IntentSettlement {
         let slash_amount = solver_record.bond_amount / 10;
         solver_record.bond_amount -= slash_amount;
         solver_record.fills_failed += 1;
+        solver_record.active_intents = solver_record.active_intents.saturating_sub(1);
 
         // Re-open the intent
         intent.state = IntentState::Open;
