@@ -128,6 +128,8 @@ pub enum Error {
     NotInitialized = 16,
     SolverHasActiveIntents = 17,
     ContractPaused = 18,
+    DeadlineNotReached = 19,
+    InsufficientBond = 20,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -333,6 +335,46 @@ impl IntentSettlement {
             (Symbol::new(&env, "solver_deregistered"), solver),
             record.bond_amount,
         );
+    }
+
+    /// Solver withdraws part of their bond without fully deregistering.
+    /// The remaining bond must still clear MIN_BOND -- to go below that,
+    /// use deregister_solver instead (which also requires no active intents).
+    pub fn withdraw_bond(env: Env, solver: Address, amount: i128) {
+        solver.require_auth();
+        Self::bump_instance_ttl(&env);
+
+        if amount <= 0 {
+            panic_with_error!(&env, Error::ZeroAmount);
+        }
+
+        let mut record: SolverRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Solver(solver.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::SolverNotRegistered));
+
+        if amount > record.bond_amount {
+            panic_with_error!(&env, Error::InsufficientBond);
+        }
+
+        let remaining = record.bond_amount - amount;
+        if remaining < MIN_BOND {
+            panic_with_error!(&env, Error::SolverBondTooLow);
+        }
+
+        record.bond_amount = remaining;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Solver(solver.clone()), &record);
+        Self::bump_solver_ttl(&env, &solver);
+
+        let bond_token: Address = env.storage().instance().get(&DataKey::BondToken).unwrap();
+        let client = token::Client::new(&env, &bond_token);
+        client.transfer(&env.current_contract_address(), &solver, &amount);
+
+        env.events()
+            .publish((Symbol::new(&env, "bond_withdrawn"), solver), amount);
     }
 
     // ── Intent Lifecycle ──────────────────────────────────────────────────────
@@ -660,6 +702,38 @@ impl IntentSettlement {
         );
     }
 
+    /// Permissionless: materialize an Open intent's Expired state once its
+    /// deadline has passed. Expiry was previously only ever realized lazily
+    /// inside accept_intent, so an intent nobody tried to accept could sit
+    /// indefinitely showing state Open in storage despite being unfillable.
+    pub fn expire_intent(env: Env, intent_id: BytesN<32>) {
+        Self::bump_instance_ttl(&env);
+
+        let mut intent: IntentRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Intent(intent_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::IntentNotFound));
+
+        if intent.state != IntentState::Open {
+            panic_with_error!(&env, Error::IntentNotOpen);
+        }
+
+        let now = env.ledger().timestamp();
+        if now < intent.deadline {
+            panic_with_error!(&env, Error::DeadlineNotReached);
+        }
+
+        intent.state = IntentState::Expired;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
+
+        env.events()
+            .publish((Symbol::new(&env, "intent_expired"),), intent_id);
+    }
+
     // ── Views ─────────────────────────────────────────────────────────────────
 
     pub fn get_intent(env: Env, intent_id: BytesN<32>) -> Option<IntentRecord> {
@@ -674,11 +748,8 @@ impl IntentSettlement {
         env.storage().instance().get(&DataKey::FeeRecipient)
     }
 
-    pub fn get_solver_count(env: Env) -> u32 {
-        env.storage()
-            .instance()
-            .get(&DataKey::TotalSolvers)
-            .unwrap_or(0)
+    pub fn get_bond_token(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::BondToken)
     }
 
     pub fn get_admin(env: Env) -> Option<Address> {

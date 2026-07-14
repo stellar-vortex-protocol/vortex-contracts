@@ -307,31 +307,71 @@ fn deregister_returns_bond() {
 }
 
 #[test]
-fn solver_count_tracks_registration_and_deregistration() {
+fn withdraw_bond_reduces_balance_without_deregistering() {
     let ctx = setup();
     let c = ctx.client();
-    assert_eq!(c.get_solver_count(), 0);
-
     ctx.register_solver();
-    assert_eq!(c.get_solver_count(), 1);
 
-    let other = Address::generate(&ctx.env);
-    ctx.bond_admin().mint(&other, &BOND);
-    c.register_solver(&other, &BOND);
-    assert_eq!(c.get_solver_count(), 2);
+    let withdraw_amount = 100 * 10_000_000;
+    c.withdraw_bond(&ctx.solver, &withdraw_amount);
 
-    c.deregister_solver(&ctx.solver);
-    assert_eq!(c.get_solver_count(), 1);
+    let record = c.get_solver(&ctx.solver).unwrap();
+    assert_eq!(record.bond_amount, BOND - withdraw_amount);
+    assert!(record.is_active);
+    assert_eq!(ctx.bond().balance(&ctx.solver), withdraw_amount);
+    assert_eq!(ctx.bond().balance(&ctx.contract_id), BOND - withdraw_amount);
 }
 
 #[test]
-fn solver_count_unaffected_by_top_up() {
+fn withdraw_bond_below_min_bond_fails() {
     let ctx = setup();
     let c = ctx.client();
-    ctx.bond_admin().mint(&ctx.solver, &(BOND * 2));
-    c.register_solver(&ctx.solver, &BOND);
-    c.register_solver(&ctx.solver, &BOND);
-    assert_eq!(c.get_solver_count(), 1);
+    ctx.register_solver();
+
+    // BOND is well above MIN_BOND; withdrawing everything but a sliver
+    // would leave less than MIN_BOND behind.
+    let too_much = BOND - MIN_BOND + 1;
+    let res = c.try_withdraw_bond(&ctx.solver, &too_much);
+    assert_eq!(res, Err(Ok(Error::SolverBondTooLow.into())));
+}
+
+#[test]
+fn withdraw_bond_more_than_balance_fails() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+
+    let res = c.try_withdraw_bond(&ctx.solver, &(BOND + 1));
+    assert_eq!(res, Err(Ok(Error::InsufficientBond.into())));
+}
+
+#[test]
+fn withdraw_bond_zero_amount_fails() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+
+    let res = c.try_withdraw_bond(&ctx.solver, &0);
+    assert_eq!(res, Err(Ok(Error::ZeroAmount.into())));
+}
+
+#[test]
+fn withdraw_bond_allowed_with_active_intent_if_still_above_minimum() {
+    // Partial withdrawal doesn't require active_intents == 0 -- only full
+    // deregistration does -- as long as the remaining bond still clears
+    // MIN_BOND, the solver stays adequately collateralized.
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    let withdraw_amount = 100 * 10_000_000;
+    c.withdraw_bond(&ctx.solver, &withdraw_amount);
+    assert_eq!(
+        c.get_solver(&ctx.solver).unwrap().bond_amount,
+        BOND - withdraw_amount
+    );
 }
 
 #[test]
@@ -677,6 +717,51 @@ fn cannot_slash_unaccepted_intent() {
     assert_eq!(res, Err(Ok(Error::IntentNotAccepted.into())));
 }
 
+// ─── Expiry ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn expire_intent_marks_open_intent_expired_after_deadline() {
+    let ctx = setup();
+    let c = ctx.client();
+    let id = ctx.submit();
+
+    ctx.pass_time(INTENT_EXPIRY + 1);
+    c.expire_intent(&id);
+
+    assert!(c.get_intent(&id).unwrap().state == IntentState::Expired);
+}
+
+#[test]
+fn expire_intent_before_deadline_fails() {
+    let ctx = setup();
+    let c = ctx.client();
+    let id = ctx.submit();
+
+    let res = c.try_expire_intent(&id);
+    assert_eq!(res, Err(Ok(Error::DeadlineNotReached.into())));
+}
+
+#[test]
+fn expire_intent_on_accepted_intent_fails() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    ctx.pass_time(FILL_WINDOW + 1);
+    let res = c.try_expire_intent(&id);
+    assert_eq!(res, Err(Ok(Error::IntentNotOpen.into())));
+}
+
+#[test]
+fn expire_intent_unknown_id_fails() {
+    let ctx = setup();
+    let unknown = BytesN::from_array(&ctx.env, &[0u8; 32]);
+    let res = ctx.client().try_expire_intent(&unknown);
+    assert_eq!(res, Err(Ok(Error::IntentNotFound.into())));
+}
+
 // ─── Storage TTL ────────────────────────────────────────────────────────────────
 
 #[test]
@@ -729,4 +814,10 @@ fn get_intent_returns_none_for_unknown_id() {
     let ctx = setup();
     let unknown = BytesN::from_array(&ctx.env, &[0u8; 32]);
     assert!(ctx.client().get_intent(&unknown).is_none());
+}
+
+#[test]
+fn get_bond_token_returns_configured_token() {
+    let ctx = setup();
+    assert_eq!(ctx.client().get_bond_token(), Some(ctx.bond_token.clone()));
 }
