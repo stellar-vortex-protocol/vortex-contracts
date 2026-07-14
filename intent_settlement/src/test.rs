@@ -157,6 +157,21 @@ fn admin_can_set_fee_recipient() {
     assert_eq!(ctx.dst().balance(&new_recipient), fee);
 }
 
+#[test]
+fn admin_can_transfer_admin() {
+    let ctx = setup();
+    assert_eq!(ctx.client().get_admin(), Some(ctx.admin.clone()));
+
+    let new_admin = Address::generate(&ctx.env);
+    ctx.client().transfer_admin(&new_admin);
+    assert_eq!(ctx.client().get_admin(), Some(new_admin.clone()));
+
+    // The new admin can now exercise admin-only functions.
+    let another_recipient = Address::generate(&ctx.env);
+    ctx.client().set_fee_recipient(&another_recipient);
+    assert_eq!(ctx.client().get_fee_recipient(), Some(another_recipient));
+}
+
 // ─── Solver registration ────────────────────────────────────────────────────────
 
 #[test]
