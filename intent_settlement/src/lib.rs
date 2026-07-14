@@ -136,22 +136,29 @@ impl IntentSettlement {
 
     // ── Solver Management ─────────────────────────────────────────────────────
 
-    /// Solvers register by depositing a USDC bond
+    /// Solvers register by depositing a USDC bond. Existing solvers may top up
+    /// with any positive amount -- the minimum is enforced on the resulting
+    /// total, not on each individual deposit.
     pub fn register_solver(env: Env, solver: Address, bond_amount: i128) {
         solver.require_auth();
 
-        if bond_amount < MIN_BOND {
+        if bond_amount <= 0 {
+            panic_with_error!(&env, Error::ZeroAmount);
+        }
+
+        let existing: Option<SolverRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Solver(solver.clone()));
+
+        let existing_bond = existing.as_ref().map(|s| s.bond_amount).unwrap_or(0);
+        if existing_bond + bond_amount < MIN_BOND {
             panic_with_error!(&env, Error::SolverBondTooLow);
         }
 
         let bond_token: Address = env.storage().instance().get(&DataKey::BondToken).unwrap();
         let client = token::Client::new(&env, &bond_token);
         client.transfer(&solver, &env.current_contract_address(), &bond_amount);
-
-        let existing: Option<SolverRecord> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Solver(solver.clone()));
 
         let record = match existing {
             Some(mut s) => {
