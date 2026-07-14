@@ -720,6 +720,21 @@ impl IntentSettlement {
         env.storage().persistent().get(&DataKey::Solver(solver))
     }
 
+    /// Whether `solver` currently meets accept_intent's requirements
+    /// (registered, active, bonded above MIN_BOND). Lets off-chain solver
+    /// bots self-check eligibility without independently reimplementing
+    /// the same logic accept_intent enforces.
+    pub fn is_solver_eligible(env: Env, solver: Address) -> bool {
+        match env
+            .storage()
+            .persistent()
+            .get::<_, SolverRecord>(&DataKey::Solver(solver))
+        {
+            Some(record) => record.is_active && record.bond_amount >= MIN_BOND,
+            None => false,
+        }
+    }
+
     pub fn get_fee_recipient(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::FeeRecipient)
     }
