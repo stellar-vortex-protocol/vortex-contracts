@@ -128,7 +128,7 @@ pub enum Error {
     SolverHasActiveIntents = 17,
     ContractPaused = 18,
     DeadlineNotReached = 19,
-    InsufficientBond = 19,
+    InsufficientBond = 20,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
