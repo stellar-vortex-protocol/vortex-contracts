@@ -171,6 +171,30 @@ fn register_solver_twice_tops_up_bond() {
 }
 
 #[test]
+fn register_solver_small_topup_below_minimum_succeeds() {
+    // A solver already above MIN_BOND should be able to top up by less than
+    // MIN_BOND -- the minimum applies to the resulting total, not the deposit.
+    let ctx = setup();
+    let small_topup = 10 * 10_000_000; // less than MIN_BOND on its own
+    ctx.bond_admin().mint(&ctx.solver, &(BOND + small_topup));
+    let c = ctx.client();
+    c.register_solver(&ctx.solver, &BOND);
+    c.register_solver(&ctx.solver, &small_topup);
+    assert_eq!(
+        c.get_solver(&ctx.solver).unwrap().bond_amount,
+        BOND + small_topup
+    );
+}
+
+#[test]
+fn register_solver_zero_amount_fails() {
+    let ctx = setup();
+    ctx.register_solver();
+    let res = ctx.client().try_register_solver(&ctx.solver, &0);
+    assert_eq!(res, Err(Ok(Error::ZeroAmount.into())));
+}
+
+#[test]
 fn deregister_returns_bond() {
     let ctx = setup();
     ctx.register_solver();
