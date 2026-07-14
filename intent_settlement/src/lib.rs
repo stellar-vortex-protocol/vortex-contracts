@@ -47,6 +47,8 @@ pub enum DataKey {
     TotalIntents,
     TotalVolume,
     Paused,
+    AllowedDstToken(Address), // dst_token -> present if allowed
+    DstAllowlistEnabled,
 }
 
 // ─── Data Structs ─────────────────────────────────────────────────────────────
@@ -129,6 +131,7 @@ pub enum Error {
     ContractPaused = 18,
     DeadlineNotReached = 19,
     InsufficientBond = 20,
+    DstTokenNotAllowed = 21,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -195,6 +198,54 @@ impl IntentSettlement {
 
         env.events()
             .publish((Symbol::new(&env, "admin_transferred"),), new_admin);
+    }
+
+    // ── Destination Token Allowlist ───────────────────────────────────────────
+
+    /// Admin-only: allow a dst_token to be targeted by new intents.
+    /// submit_intent had no validation on dst_token at all -- any address,
+    /// including a bogus or malicious "token" contract, could be named as
+    /// the destination.
+    pub fn add_allowed_dst_token(env: Env, token: Address) {
+        Self::require_admin(&env);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowedDstToken(token.clone()), &true);
+        env.events()
+            .publish((Symbol::new(&env, "dst_token_allowed"),), token);
+    }
+
+    pub fn remove_allowed_dst_token(env: Env, token: Address) {
+        Self::require_admin(&env);
+        env.storage()
+            .instance()
+            .remove(&DataKey::AllowedDstToken(token.clone()));
+        env.events()
+            .publish((Symbol::new(&env, "dst_token_disallowed"),), token);
+    }
+
+    pub fn is_dst_token_allowed(env: Env, token: Address) -> bool {
+        env.storage()
+            .instance()
+            .has(&DataKey::AllowedDstToken(token))
+    }
+
+    /// Admin-only: turn allowlist enforcement in submit_intent on/off.
+    /// Off by default -- an admin opts in once they've populated the list
+    /// via add_allowed_dst_token, rather than every intent submission
+    /// suddenly requiring one.
+    pub fn set_dst_allowlist_enabled(env: Env, enabled: bool) {
+        Self::require_admin(&env);
+        env.storage()
+            .instance()
+            .set(&DataKey::DstAllowlistEnabled, &enabled);
+    }
+
+    pub fn is_dst_allowlist_enabled(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::DstAllowlistEnabled)
+            .unwrap_or(false)
     }
 
     // ── Pause Control ─────────────────────────────────────────────────────────
@@ -374,6 +425,12 @@ impl IntentSettlement {
 
         if src_amount <= 0 || min_dst_amount <= 0 {
             panic_with_error!(&env, Error::ZeroAmount);
+        }
+
+        if Self::is_dst_allowlist_enabled(env.clone())
+            && !Self::is_dst_token_allowed(env.clone(), dst_token.clone())
+        {
+            panic_with_error!(&env, Error::DstTokenNotAllowed);
         }
 
         let now = env.ledger().timestamp();
