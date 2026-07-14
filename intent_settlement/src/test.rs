@@ -133,6 +133,45 @@ fn cannot_initialize_twice() {
     assert_eq!(res, Err(Ok(Error::AlreadyInitialized.into())));
 }
 
+// ─── Admin ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn admin_can_set_fee_recipient() {
+    let ctx = setup();
+    let new_recipient = Address::generate(&ctx.env);
+
+    ctx.client().set_fee_recipient(&new_recipient);
+    assert_eq!(
+        ctx.client().get_fee_recipient(),
+        Some(new_recipient.clone())
+    );
+
+    // The new recipient actually receives fees going forward.
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    let fee = FILL * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
+    c.fill_intent(&ctx.solver, &id, &FILL);
+    assert_eq!(ctx.dst().balance(&new_recipient), fee);
+}
+
+#[test]
+fn admin_can_transfer_admin() {
+    let ctx = setup();
+    assert_eq!(ctx.client().get_admin(), Some(ctx.admin.clone()));
+
+    let new_admin = Address::generate(&ctx.env);
+    ctx.client().transfer_admin(&new_admin);
+    assert_eq!(ctx.client().get_admin(), Some(new_admin.clone()));
+
+    // The new admin can now exercise admin-only functions.
+    let another_recipient = Address::generate(&ctx.env);
+    ctx.client().set_fee_recipient(&another_recipient);
+    assert_eq!(ctx.client().get_fee_recipient(), Some(another_recipient));
+}
+
 // ─── Pause ──────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -193,43 +232,6 @@ fn pause_does_not_block_slashing_an_already_accepted_intent() {
     // can't dodge accountability for an obligation they already took on.
     c.slash_solver(&id);
     assert_eq!(c.get_solver(&ctx.solver).unwrap().fills_failed, 1);
-// ─── Admin ──────────────────────────────────────────────────────────────────────
-
-#[test]
-fn admin_can_set_fee_recipient() {
-    let ctx = setup();
-    let new_recipient = Address::generate(&ctx.env);
-
-    ctx.client().set_fee_recipient(&new_recipient);
-    assert_eq!(
-        ctx.client().get_fee_recipient(),
-        Some(new_recipient.clone())
-    );
-
-    // The new recipient actually receives fees going forward.
-    let c = ctx.client();
-    ctx.register_solver();
-    let id = ctx.submit();
-    c.accept_intent(&ctx.solver, &id);
-    let fee = FILL * 5 / 10_000;
-    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
-    c.fill_intent(&ctx.solver, &id, &FILL);
-    assert_eq!(ctx.dst().balance(&new_recipient), fee);
-}
-
-#[test]
-fn admin_can_transfer_admin() {
-    let ctx = setup();
-    assert_eq!(ctx.client().get_admin(), Some(ctx.admin.clone()));
-
-    let new_admin = Address::generate(&ctx.env);
-    ctx.client().transfer_admin(&new_admin);
-    assert_eq!(ctx.client().get_admin(), Some(new_admin.clone()));
-
-    // The new admin can now exercise admin-only functions.
-    let another_recipient = Address::generate(&ctx.env);
-    ctx.client().set_fee_recipient(&another_recipient);
-    assert_eq!(ctx.client().get_fee_recipient(), Some(another_recipient));
 }
 
 // ─── Solver registration ────────────────────────────────────────────────────────
@@ -676,6 +678,20 @@ fn writes_extend_persistent_ttl_for_intent_and_solver() {
     // at whatever short default the test ledger starts new entries at.
     assert!(intent_ttl >= crate::PERSISTENT_TTL_EXTEND_TO - 1);
     assert!(solver_ttl >= crate::PERSISTENT_TTL_EXTEND_TO - 1);
+}
+
+#[test]
+fn state_changing_calls_extend_instance_ttl() {
+    use soroban_sdk::testutils::storage::Instance as _;
+
+    let ctx = setup();
+    ctx.register_solver();
+
+    let instance_ttl = ctx
+        .env
+        .as_contract(&ctx.contract_id, || ctx.env.storage().instance().get_ttl());
+
+    assert!(instance_ttl >= crate::INSTANCE_TTL_EXTEND_TO - 1);
 }
 
 // ─── Views ──────────────────────────────────────────────────────────────────────

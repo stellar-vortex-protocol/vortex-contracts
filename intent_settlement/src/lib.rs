@@ -28,6 +28,12 @@ const DAY_IN_LEDGERS: u32 = 17280; // ~5s per ledger
 const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 14;
 const PERSISTENT_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 30;
 
+// The contract instance entry (Admin/FeeRecipient/BondToken/TotalIntents/
+// TotalVolume, plus the contract's own code) is a single ledger entry and
+// needs the same treatment, or the whole contract becomes unreachable.
+const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 60;
+
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -119,8 +125,8 @@ pub enum Error {
     InvalidDeadline = 14,
     IntentAlreadyFilled = 15,
     NotInitialized = 16,
-    ContractPaused = 17,
-    SolverHasActiveIntents = 16,
+    SolverHasActiveIntents = 17,
+    ContractPaused = 18,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -146,31 +152,9 @@ impl IntentSettlement {
             .set(&DataKey::BondToken, &bond_token);
         env.storage().instance().set(&DataKey::TotalIntents, &0u64);
         env.storage().instance().set(&DataKey::TotalVolume, &0i128);
+        Self::bump_instance_ttl(&env);
     }
 
-    // ── Pause Control ─────────────────────────────────────────────────────────
-
-    /// Admin-only: halt new intent submission, acceptance, and fills for
-    /// incident response. slash_solver stays permissionless throughout, so a
-    /// solver already holding an Accepted intent can't dodge accountability
-    /// by waiting out the pause.
-    pub fn pause(env: Env) {
-        Self::require_admin(&env);
-        env.storage().instance().set(&DataKey::Paused, &true);
-        env.events().publish((Symbol::new(&env, "paused"),), true);
-    }
-
-    pub fn unpause(env: Env) {
-        Self::require_admin(&env);
-        env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish((Symbol::new(&env, "paused"),), false);
-    }
-
-    pub fn is_paused(env: Env) -> bool {
-        env.storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false)
     // ── Admin ──────────────────────────────────────────────────────────────────
 
     /// Admin-only: rotate the address that receives protocol fees and slashed
@@ -211,6 +195,31 @@ impl IntentSettlement {
             .publish((Symbol::new(&env, "admin_transferred"),), new_admin);
     }
 
+    // ── Pause Control ─────────────────────────────────────────────────────────
+
+    /// Admin-only: halt new intent submission, acceptance, and fills for
+    /// incident response. slash_solver stays permissionless throughout, so a
+    /// solver already holding an Accepted intent can't dodge accountability
+    /// by waiting out the pause.
+    pub fn pause(env: Env) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((Symbol::new(&env, "paused"),), true);
+    }
+
+    pub fn unpause(env: Env) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((Symbol::new(&env, "paused"),), false);
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
     // ── Solver Management ─────────────────────────────────────────────────────
 
     /// Solvers register by depositing a USDC bond. Existing solvers may top up
@@ -218,6 +227,7 @@ impl IntentSettlement {
     /// total, not on each individual deposit.
     pub fn register_solver(env: Env, solver: Address, bond_amount: i128) {
         solver.require_auth();
+        Self::bump_instance_ttl(&env);
 
         if bond_amount <= 0 {
             panic_with_error!(&env, Error::ZeroAmount);
@@ -268,6 +278,7 @@ impl IntentSettlement {
 
     pub fn deregister_solver(env: Env, solver: Address) {
         solver.require_auth();
+        Self::bump_instance_ttl(&env);
 
         let record: SolverRecord = env
             .storage()
@@ -317,6 +328,7 @@ impl IntentSettlement {
     ) -> BytesN<32> {
         user.require_auth();
         Self::require_not_paused(&env);
+        Self::bump_instance_ttl(&env);
 
         if src_amount <= 0 || min_dst_amount <= 0 {
             panic_with_error!(&env, Error::ZeroAmount);
@@ -374,6 +386,7 @@ impl IntentSettlement {
     pub fn accept_intent(env: Env, solver: Address, intent_id: BytesN<32>) {
         solver.require_auth();
         Self::require_not_paused(&env);
+        Self::bump_instance_ttl(&env);
 
         let mut solver_record: SolverRecord = env
             .storage()
@@ -431,6 +444,7 @@ impl IntentSettlement {
     pub fn fill_intent(env: Env, solver: Address, intent_id: BytesN<32>, fill_amount: i128) {
         solver.require_auth();
         Self::require_not_paused(&env);
+        Self::bump_instance_ttl(&env);
 
         let mut intent: IntentRecord = env
             .storage()
@@ -517,6 +531,7 @@ impl IntentSettlement {
     /// User can cancel an Open intent (not yet accepted)
     pub fn cancel_intent(env: Env, user: Address, intent_id: BytesN<32>) {
         user.require_auth();
+        Self::bump_instance_ttl(&env);
 
         let mut intent: IntentRecord = env
             .storage()
@@ -548,6 +563,8 @@ impl IntentSettlement {
 
     /// Permissionless: slash a solver that accepted but didn't fill within FILL_WINDOW
     pub fn slash_solver(env: Env, intent_id: BytesN<32>) {
+        Self::bump_instance_ttl(&env);
+
         let mut intent: IntentRecord = env
             .storage()
             .persistent()
@@ -666,6 +683,14 @@ impl IntentSettlement {
         if Self::is_paused(env.clone()) {
             panic_with_error!(env, Error::ContractPaused);
         }
+    }
+
+    fn bump_instance_ttl(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    }
+
     fn bump_intent_ttl(env: &Env, intent_id: &BytesN<32>) {
         env.storage().persistent().extend_ttl(
             &DataKey::Intent(intent_id.clone()),
