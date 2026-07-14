@@ -398,6 +398,61 @@ fn withdraw_bond_allowed_with_active_intent_if_still_above_minimum() {
 }
 
 #[test]
+fn withdraw_bond_reflects_reduced_balance_after_a_prior_slash() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+    let bond_after_slash = c.get_solver(&ctx.solver).unwrap().bond_amount;
+    assert!(bond_after_slash < BOND);
+
+    // Withdrawing more than the (slash-reduced) balance still fails against
+    // the current balance, not the original pre-slash BOND.
+    let res = c.try_withdraw_bond(&ctx.solver, &(bond_after_slash + 1));
+    assert_eq!(res, Err(Ok(Error::InsufficientBond.into())));
+
+    // A withdrawal that respects the reduced balance and stays above
+    // MIN_BOND still succeeds.
+    let small_withdrawal = bond_after_slash - MIN_BOND;
+    c.withdraw_bond(&ctx.solver, &small_withdrawal);
+    assert_eq!(
+        c.get_solver(&ctx.solver).unwrap().bond_amount,
+        bond_after_slash - small_withdrawal
+    );
+}
+
+#[test]
+fn withdraw_bond_fails_entirely_once_slash_deactivates_solver() {
+    // A solver whose bond has already dropped below MIN_BOND (and who was
+    // therefore deactivated by PR3's guard) can't withdraw_bond at all --
+    // any positive withdrawal would only push them further below MIN_BOND,
+    // so the existing SolverBondTooLow check rejects it without needing a
+    // separate is_active check in withdraw_bond itself.
+    let ctx = setup();
+    let c = ctx.client();
+
+    let thin_bond = MIN_BOND + MIN_BOND / 10;
+    ctx.bond_admin().mint(&ctx.solver, &thin_bond);
+    c.register_solver(&ctx.solver, &thin_bond);
+
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+
+    let record = c.get_solver(&ctx.solver).unwrap();
+    assert!(record.bond_amount < MIN_BOND);
+    assert!(!record.is_active);
+
+    let res = c.try_withdraw_bond(&ctx.solver, &1);
+    assert_eq!(res, Err(Ok(Error::SolverBondTooLow.into())));
+}
+
+#[test]
 fn deregister_with_accepted_intent_fails() {
     let ctx = setup();
     ctx.register_solver();
