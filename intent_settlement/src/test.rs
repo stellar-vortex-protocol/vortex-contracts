@@ -133,6 +133,66 @@ fn cannot_initialize_twice() {
     assert_eq!(res, Err(Ok(Error::AlreadyInitialized.into())));
 }
 
+// ─── Pause ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn paused_blocks_submit_accept_and_fill() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+
+    c.pause();
+    assert!(c.is_paused());
+
+    let deadline: Option<u64> = None;
+    let res = c.try_submit_intent(
+        &ctx.user,
+        &String::from_str(&ctx.env, "ethereum"),
+        &String::from_str(&ctx.env, "0xabc"),
+        &SRC_AMT,
+        &ctx.dst_token,
+        &MIN_DST,
+        &deadline,
+    );
+    assert_eq!(res, Err(Ok(Error::ContractPaused.into())));
+
+    let res = c.try_accept_intent(&ctx.solver, &id);
+    assert_eq!(res, Err(Ok(Error::ContractPaused.into())));
+}
+
+#[test]
+fn unpause_restores_normal_operation() {
+    let ctx = setup();
+    let c = ctx.client();
+
+    c.pause();
+    c.unpause();
+    assert!(!c.is_paused());
+
+    // Normal lifecycle works again.
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+    let intent = c.get_intent(&id).unwrap();
+    assert!(intent.state == IntentState::Accepted);
+}
+
+#[test]
+fn pause_does_not_block_slashing_an_already_accepted_intent() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    c.pause();
+    ctx.pass_time(FILL_WINDOW + 1);
+
+    // Permissionless slashing keeps working even while paused, so a solver
+    // can't dodge accountability for an obligation they already took on.
+    c.slash_solver(&id);
+    assert_eq!(c.get_solver(&ctx.solver).unwrap().fills_failed, 1);
 // ─── Admin ──────────────────────────────────────────────────────────────────────
 
 #[test]

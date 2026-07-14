@@ -40,6 +40,7 @@ pub enum DataKey {
     Solver(Address),    // address -> SolverRecord
     TotalIntents,
     TotalVolume,
+    Paused,
 }
 
 // ─── Data Structs ─────────────────────────────────────────────────────────────
@@ -118,6 +119,7 @@ pub enum Error {
     InvalidDeadline = 14,
     IntentAlreadyFilled = 15,
     NotInitialized = 16,
+    ContractPaused = 17,
     SolverHasActiveIntents = 16,
 }
 
@@ -146,6 +148,29 @@ impl IntentSettlement {
         env.storage().instance().set(&DataKey::TotalVolume, &0i128);
     }
 
+    // ── Pause Control ─────────────────────────────────────────────────────────
+
+    /// Admin-only: halt new intent submission, acceptance, and fills for
+    /// incident response. slash_solver stays permissionless throughout, so a
+    /// solver already holding an Accepted intent can't dodge accountability
+    /// by waiting out the pause.
+    pub fn pause(env: Env) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((Symbol::new(&env, "paused"),), true);
+    }
+
+    pub fn unpause(env: Env) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((Symbol::new(&env, "paused"),), false);
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     // ── Admin ──────────────────────────────────────────────────────────────────
 
     /// Admin-only: rotate the address that receives protocol fees and slashed
@@ -291,6 +316,7 @@ impl IntentSettlement {
         deadline: Option<u64>,
     ) -> BytesN<32> {
         user.require_auth();
+        Self::require_not_paused(&env);
 
         if src_amount <= 0 || min_dst_amount <= 0 {
             panic_with_error!(&env, Error::ZeroAmount);
@@ -347,6 +373,7 @@ impl IntentSettlement {
     /// Solver claims an intent (exclusive fill right for FILL_WINDOW seconds)
     pub fn accept_intent(env: Env, solver: Address, intent_id: BytesN<32>) {
         solver.require_auth();
+        Self::require_not_paused(&env);
 
         let mut solver_record: SolverRecord = env
             .storage()
@@ -403,6 +430,7 @@ impl IntentSettlement {
     /// The solver provides cross-chain proof (stored off-chain; on-chain we trust solver's bond)
     pub fn fill_intent(env: Env, solver: Address, intent_id: BytesN<32>, fill_amount: i128) {
         solver.require_auth();
+        Self::require_not_paused(&env);
 
         let mut intent: IntentRecord = env
             .storage()
@@ -625,6 +653,19 @@ impl IntentSettlement {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
+    fn require_admin(env: &Env) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotInitialized));
+        admin.require_auth();
+    }
+
+    fn require_not_paused(env: &Env) {
+        if Self::is_paused(env.clone()) {
+            panic_with_error!(env, Error::ContractPaused);
+        }
     fn bump_intent_ttl(env: &Env, intent_id: &BytesN<32>) {
         env.storage().persistent().extend_ttl(
             &DataKey::Intent(intent_id.clone()),
