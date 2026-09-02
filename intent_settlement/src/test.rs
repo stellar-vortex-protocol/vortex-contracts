@@ -74,6 +74,7 @@ impl Ctx {
             &self.dst_token,
             &MIN_DST,
             &deadline,
+            &None,
         )
     }
 
@@ -1915,6 +1916,9 @@ fn get_protocol_params_returns_current_constants() {
     assert_eq!(params.fill_window, FILL_WINDOW);
     assert_eq!(params.intent_expiry, INTENT_EXPIRY);
     assert_eq!(params.protocol_fee_bps, PROTOCOL_FEE_BPS);
+    assert_eq!(params.referral_share_bps, 0);
+}
+
 // ─── Partial fills ───────────────────────────────────────────────────────────────
 
 #[test]
@@ -3053,4 +3057,177 @@ fn unsupported_src_chain_rejects_gated_fill() {
     set_proof(&ctx, &reg, &id, 2, SRC_AMT);
     let res = ctx.client().try_fill_intent(&ctx.solver, &id, &FILL, &true);
     assert_eq!(res, Err(Ok(Error::SrcChainNotSupported.into())));
+}
+
+// ─── #281 On-chain referral fee-share ────────────────────────────────────────────
+
+/// #281: `submit_intent` rejects a referrer that equals the submitting user.
+#[test]
+fn submit_intent_self_referral_rejected() {
+    let ctx = setup();
+    let deadline: Option<u64> = None;
+    let res = ctx.client().try_submit_intent(
+        &ctx.user,
+        &String::from_str(&ctx.env, "ethereum"),
+        &String::from_str(&ctx.env, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+        &SRC_AMT,
+        &ctx.dst_token,
+        &MIN_DST,
+        &deadline,
+        &Some(ctx.user.clone()),
+    );
+    assert_eq!(res, Err(Ok(Error::SelfReferral.into())));
+}
+
+/// #281: with `referral_share_bps` > 0 the referrer receives its configured
+/// slice and the FeeRecipient receives the remainder.  The user still gets the
+/// full fill_amount; the fee is paid entirely by the solver.
+#[test]
+fn fill_intent_referrer_receives_configured_split() {
+    let ctx = setup();
+    let c = ctx.client();
+    let referrer = Address::generate(&ctx.env);
+
+    // Configure a 20% referral share (2000 bps of the protocol fee).
+    c.set_config(&MIN_BOND, &FILL_WINDOW, &INTENT_EXPIRY, &5_i128, &2000_i128);
+
+    ctx.register_solver();
+
+    let id = c.submit_intent(
+        &ctx.user,
+        &String::from_str(&ctx.env, "ethereum"),
+        &String::from_str(&ctx.env, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+        &SRC_AMT,
+        &ctx.dst_token,
+        &MIN_DST,
+        &None,
+        &Some(referrer.clone()),
+    );
+
+    c.accept_intent(&ctx.solver, &id);
+
+    let fee = FILL * 5 / 10_000;
+    let referral = fee * 2000 / 10_000;
+    let recipient = fee - referral; // dust absorbed by FeeRecipient
+    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
+    c.fill_intent(&ctx.solver, &id, &FILL, &false);
+
+    assert_eq!(ctx.dst().balance(&ctx.user), FILL);
+    assert_eq!(ctx.dst().balance(&referrer), referral);
+    assert_eq!(ctx.dst().balance(&ctx.fee_recipient), recipient);
+    assert_eq!(ctx.dst().balance(&ctx.solver), 0);
+}
+
+/// #281: referral fee-share accrues on every partial fill, not just once at
+/// final settlement.  With a 100% share the entire fee lands on the referrer
+/// across both fills.
+#[test]
+fn partial_fills_accrue_referral_share_across_fills() {
+    let ctx = setup();
+    let c = ctx.client();
+    let referrer = Address::generate(&ctx.env);
+
+    // Configure 100% referral share for easy arithmetic.
+    c.set_config(&MIN_BOND, &FILL_WINDOW, &INTENT_EXPIRY, &5_i128, &10_000_i128);
+
+    ctx.register_solver();
+
+    let id = c.submit_intent(
+        &ctx.user,
+        &String::from_str(&ctx.env, "ethereum"),
+        &String::from_str(&ctx.env, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+        &SRC_AMT,
+        &ctx.dst_token,
+        &MIN_DST,
+        &None,
+        &Some(referrer.clone()),
+    );
+
+    // First partial fill: half of MIN_DST.
+    let half = MIN_DST / 2;
+    let fee1 = half * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(half + fee1));
+    c.accept_intent(&ctx.solver, &id);
+    c.fill_intent(&ctx.solver, &id, &half, &false);
+
+    // 100% share: entire fee1 goes to the referrer.
+    assert_eq!(ctx.dst().balance(&referrer), fee1);
+    assert_eq!(ctx.dst().balance(&ctx.fee_recipient), 0);
+
+    // Second partial fill: the remainder brings the intent to Filled.
+    let remainder = MIN_DST - half;
+    let fee2 = remainder * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(remainder + fee2));
+    c.accept_intent(&ctx.solver, &id);
+    c.fill_intent(&ctx.solver, &id, &remainder, &false);
+
+    // Total referral: fee1 + fee2.
+    assert_eq!(ctx.dst().balance(&referrer), fee1 + fee2);
+    assert_eq!(ctx.dst().balance(&ctx.fee_recipient), 0);
+}
+
+/// #281: a 0 referral_share_bps (the default) routes 100% of the fee to
+/// FeeRecipient even when a referrer is named — the share must be explicitly
+/// configured by an admin to take effect.
+#[test]
+fn zero_referral_share_sends_all_fee_to_fee_recipient() {
+    let ctx = setup();
+    let c = ctx.client();
+    let referrer = Address::generate(&ctx.env);
+
+    // Explicitly set referral_share_bps to 0 for determinism (avoids relying
+    // on the initialized default, which references DEFAULT_* constants).
+    c.set_config(&MIN_BOND, &FILL_WINDOW, &INTENT_EXPIRY, &5_i128, &0_i128);
+
+    ctx.register_solver();
+
+    let id = c.submit_intent(
+        &ctx.user,
+        &String::from_str(&ctx.env, "ethereum"),
+        &String::from_str(&ctx.env, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+        &SRC_AMT,
+        &ctx.dst_token,
+        &MIN_DST,
+        &None,
+        &Some(referrer.clone()),
+    );
+
+    c.accept_intent(&ctx.solver, &id);
+
+    let fee = FILL * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
+    c.fill_intent(&ctx.solver, &id, &FILL, &false);
+
+    // With 0 share, the entire fee goes to FeeRecipient even though a
+    // referrer was named.
+    assert_eq!(ctx.dst().balance(&ctx.user), FILL);
+    assert_eq!(ctx.dst().balance(&referrer), 0);
+    assert_eq!(ctx.dst().balance(&ctx.fee_recipient), fee);
+    assert_eq!(ctx.dst().balance(&ctx.solver), 0);
+}
+
+/// #281 regression: no referrer set behaves identically to before #281 — the
+/// full fee goes to FeeRecipient, even when a non-zero referral share is
+/// configured.
+#[test]
+fn fill_intent_no_referrer_unchanged_behavior() {
+    let ctx = setup();
+    let c = ctx.client();
+
+    // Configure a non-zero referral share to prove it has no effect when
+    // no referrer is set on the intent.
+    c.set_config(&MIN_BOND, &FILL_WINDOW, &INTENT_EXPIRY, &5_i128, &2000_i128);
+
+    ctx.register_solver();
+    let id = ctx.submit(); // referrer = None
+    c.accept_intent(&ctx.solver, &id);
+
+    let fee = FILL * 5 / 10_000;
+    ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
+    c.fill_intent(&ctx.solver, &id, &FILL, &false);
+
+    // No referrer → full fee to FeeRecipient, even though the share is 20%.
+    assert_eq!(ctx.dst().balance(&ctx.user), FILL);
+    assert_eq!(ctx.dst().balance(&ctx.fee_recipient), fee);
+    assert_eq!(ctx.dst().balance(&ctx.solver), 0);
 }

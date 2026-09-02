@@ -23,6 +23,17 @@ first deploys to mainnet.
 
 ### Added
 
+- **Optional on-chain referral fee-share** (#281): `submit_intent` now accepts
+  an optional `referrer: Option<Address>`. When `ProtocolConfig.referral_share_bps`
+  is non-zero and a referrer is set, the configured slice of each fill's
+  protocol fee is routed to the referrer at `fill_intent` time instead of
+  going entirely to the FeeRecipient; the remainder still goes to
+  FeeRecipient. The share defaults to 0 (disabled), so existing deployments
+  see no behavior change until an admin opts in via `set_config`. Referral
+  fee-share accrues proportionally on every partial fill, and integer-division
+  dust is absorbed by the FeeRecipient. A self-referral (`referrer == user`)
+  is rejected at `submit_intent` time with the new `Error::SelfReferral`
+  variant.
 - **Storage TTL management**: persistent `Intent`/`Solver` entries and the
   contract instance now have their TTL extended on every write, closing a
   gap where none of Soroban's state-archival requirements were handled.

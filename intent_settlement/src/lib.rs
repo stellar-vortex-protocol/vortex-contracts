@@ -65,6 +65,16 @@ const PERSISTENT_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 30;
 const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
 const INSTANCE_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 60;
 
+/// Upper bound for the on-chain referral fee-share (basis points of the
+/// protocol fee routed to the referrer).  Capped at 10 000 (100%) so the
+/// FeeRecipient never receives a negative or overflowing amount.
+const MAX_REFERRAL_SHARE_BPS: i128 = 10_000;
+
+/// Default referral fee-share (0 = disabled — fee always goes to
+/// FeeRecipient).  Set to a non-zero value to activate the referral
+/// programme without further contract upgrades.
+const DEFAULT_REFERRAL_SHARE_BPS: i128 = 0;
+
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -173,6 +183,12 @@ pub struct ProtocolConfig {
     pub intent_expiry: u64,
     /// Protocol fee in basis points charged on each fill (0.01% per bps).
     pub protocol_fee_bps: i128,
+    /// Basis points of the protocol fee routed to the referrer (if set)
+    /// on each fill.  0 (the default) leaves the existing FeeRecipient
+    /// behaviour unchanged; any value up to `MAX_REFERRAL_SHARE_BPS`
+    /// splits the computed fee proportionally between the referrer and the
+    /// FeeRecipient (dust rounds to the FeeRecipient).
+    pub referral_share_bps: i128,
 }
 
 /// A user's cross-chain swap intent
@@ -208,6 +224,12 @@ pub struct IntentRecord {
     /// intent transitions to `Filled` as soon as `total_filled` satisfies
     /// the user's `min_dst_amount` requirement.
     pub total_filled: i128,
+    /// Optional address that referred this intent.  Set at submission time
+    /// by `submit_intent`; locked for the intent's lifetime.  When
+    /// `referral_share_bps` in the protocol config is non-zero and this
+    /// field is `Some(addr)`, the configured slice of the fill fee is
+    /// routed to `addr` rather than to the FeeRecipient.
+    pub referrer: Option<Address>,
 }
 
 #[contracttype]
@@ -259,6 +281,10 @@ pub struct ProtocolParams {
     pub intent_expiry: u64,
     /// Protocol fee charged on each fill, in basis points (1 bps = 0.01%).
     pub protocol_fee_bps: i128,
+    /// Basis points of the protocol fee routed to the referrer on each fill.
+    /// Mirrors `ProtocolConfig.referral_share_bps`; 0 means no referral
+    /// routing is active.
+    pub referral_share_bps: i128,
 }
 
 /// Tracks the leading bid for an intent that is in the `Bidding` state.
@@ -450,6 +476,10 @@ pub enum Error {
     /// chain-name → Wormhole-chain-ID table, so the proof's chain cannot be
     /// validated against it.
     SrcChainNotSupported = 34,
+    /// #281: `submit_intent` was called with a `referrer` equal to the
+    /// submitting `user`.  Self-referral is rejected to prevent a user from
+    /// gaming the referral programme by naming their own address.
+    SelfReferral = 35,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -494,6 +524,7 @@ impl IntentSettlement {
                 fill_window: DEFAULT_FILL_WINDOW,
                 intent_expiry: DEFAULT_INTENT_EXPIRY,
                 protocol_fee_bps: DEFAULT_PROTOCOL_FEE_BPS,
+                referral_share_bps: DEFAULT_REFERRAL_SHARE_BPS,
             },
         );
         Self::bump_instance_ttl(&env);
@@ -630,23 +661,28 @@ impl IntentSettlement {
         Self::load_config(&env)
     }
 
-    /// Admin-only: update the four configurable protocol parameters atomically.
+    /// Admin-only: update the configurable protocol parameters atomically.
     ///
     /// Bounds (any violation returns `InvalidConfig`):
-    /// * `protocol_fee_bps`  ≤ 1 000 (10%)
-    /// * `fill_window`       ≥ 60 s
-    /// * `intent_expiry`     ≥ 300 s and > fill_window
-    /// * `min_bond`          ≥ 1 token unit (10_000_000 for 7-decimal USDC)
+    /// * `protocol_fee_bps`    ≤ 1 000 (10%)
+    /// * `fill_window`         ≥ 60 s
+    /// * `intent_expiry`       ≥ 300 s and > fill_window
+    /// * `min_bond`            ≥ 1 token unit (10_000_000 for 7-decimal USDC)
+    /// * `referral_share_bps`  ≤ 10 000 (100% of the fee)
     pub fn set_config(
         env: Env,
         min_bond: i128,
         fill_window: u64,
         intent_expiry: u64,
         protocol_fee_bps: i128,
+        referral_share_bps: i128,
     ) {
         Self::require_admin(&env);
 
         if !(0..=MAX_PROTOCOL_FEE_BPS).contains(&protocol_fee_bps) {
+            panic_with_error!(&env, Error::InvalidConfig);
+        }
+        if !(0..=MAX_REFERRAL_SHARE_BPS).contains(&referral_share_bps) {
             panic_with_error!(&env, Error::InvalidConfig);
         }
         if fill_window < MIN_FILL_WINDOW_SECS {
@@ -664,13 +700,14 @@ impl IntentSettlement {
             fill_window,
             intent_expiry,
             protocol_fee_bps,
+            referral_share_bps,
         };
         env.storage().instance().set(&DataKey::Config, &cfg);
         Self::bump_instance_ttl(&env);
 
         env.events().publish(
             (Symbol::new(&env, "config_updated"),),
-            (min_bond, fill_window, intent_expiry, protocol_fee_bps),
+            (min_bond, fill_window, intent_expiry, protocol_fee_bps, referral_share_bps),
         );
     }
 
@@ -1232,6 +1269,14 @@ impl IntentSettlement {
 
     /// User submits a swap intent. No funds are locked on Stellar at this point —
     /// the user initiates the source-chain tx separately.
+    ///
+    /// # Parameters
+    ///
+    /// - `referrer` (optional, default `None`): the address to credit with a share
+    ///   of the protocol fee when the intent is filled.  Must not equal `user`
+    ///   (self-referral is rejected with `Error::SelfReferral`).  The share is
+    ///   governed by `ProtocolConfig.referral_share_bps` and is only paid out
+    ///   when that config value is non-zero.
     #[allow(clippy::too_many_arguments)]
     pub fn submit_intent(
         env: Env,
@@ -1242,6 +1287,7 @@ impl IntentSettlement {
         dst_token: Address,
         min_dst_amount: i128,
         deadline: Option<u64>,
+        referrer: Option<Address>,
     ) -> BytesN<32> {
         // Auth audit: require_auth() is correct. The user must sign to assert
         // ownership of the address receiving output tokens (dst). If a third-party
@@ -1286,6 +1332,15 @@ impl IntentSettlement {
 
         if expiry <= now {
             panic_with_error!(&env, Error::InvalidDeadline);
+        }
+
+        // #281: self-referral guard — a user cannot name their own address
+        // as the referrer, which would let them claim referral rewards on
+        // their own volume.
+        if let Some(r) = &referrer {
+            if r == &user {
+                panic_with_error!(&env, Error::SelfReferral);
+            }
         }
 
         // Widen the preimage with a per-user nonce so that two intents from
@@ -1344,6 +1399,7 @@ impl IntentSettlement {
             filled_at: None,
             fill_amount: None,
             total_filled: 0,
+            referrer,
         };
 
         env.storage()
@@ -1565,43 +1621,11 @@ impl IntentSettlement {
             Self::validate_proof(&env, &intent, &intent_id);
         }
 
-        // Deliver this fill's tokens to the user.
-        let dst_client = token::Client::new(&env, &intent.dst_token);
-        dst_client.transfer(&solver, &intent.user, &fill_amount);
-
-        // Solver also pays the protocol fee on each fill.
-        let fee = fill_amount * PROTOCOL_FEE_BPS / 10_000;
         // ── Effects first (CEI) ──────────────────────────────────────────────
-        // Mark the intent Filled and write every state change to storage
-        // *before* any external token transfer executes. A hostile SEP-41
-        // token that attempts to re-enter fill_intent or slash_solver during
-        // the transfer would see the intent already Filled and be rejected.
-        // Solver delivers the full requested output to the user.
-        let dst_client = token::Client::new(&env, &intent.dst_token);
-        dst_client.transfer(&solver, &intent.user, &fill_amount);
-
-        // Solver also pays the protocol fee (priced into their quote). Taking the
-        // fee from the solver — rather than clawing it back from the user — keeps
-        // the user's received amount at or above `min_dst_amount`, and keeps every
-        // token transfer authorized by the solver who signed this call.
-        //
-        // Explicit checked_mul/checked_div makes the overflow-safety property
-        // visible in code, rather than relying solely on the Cargo.toml
-        // overflow-checks = true release-profile setting (issue #31).
-        let fee = fill_amount
-            .checked_mul(PROTOCOL_FEE_BPS)
-            .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow))
-            .checked_div(10_000)
-            .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow));
-        if fee > 0 {
-            let fee_recipient: Address = env
-                .storage()
-                .instance()
-                .get(&DataKey::FeeRecipient)
-                .unwrap();
-            dst_client.transfer(&solver, &fee_recipient, &fee);
-        }
-
+        // All state changes below (IntentRecord, SolverRecord, stats) are
+        // persisted *before* any token transfer, so a re-entrant or hostile
+        // SEP-41 token cannot trigger a second fill on an already-Filled
+        // intent.
         // Accumulate the fill.
         intent.total_filled += fill_amount;
         let cumulative = intent.total_filled;
@@ -1666,22 +1690,62 @@ impl IntentSettlement {
         Self::bump_intent_ttl(&env, &intent_id);
 
         // ── Interactions: token transfers ────────────────────────────────────
-        // Solver delivers the full requested output to the user.
+        // CEI: all state above (IntentRecord, SolverRecord, stats) has been
+        // persisted. A hostile SEP-41 token that attempts to re-enter
+        // fill_intent during these transfers would see the intent already
+        // Filled and be rejected.
         let dst_client = token::Client::new(&env, &intent.dst_token);
+
+        // Solver delivers the full requested output to the user.
         dst_client.transfer(&solver, &intent.user, &fill_amount);
 
-        // Solver also pays the protocol fee (priced into their quote). Taking the
-        // fee from the solver — rather than clawing it back from the user — keeps
-        // the user's received amount at or above `min_dst_amount`, and keeps every
-        // token transfer authorized by the solver who signed this call.
-        let fee = fill_amount * PROTOCOL_FEE_BPS / 10_000;
+        // Solver also pays the protocol fee (priced into their quote). Taking
+        // the fee from the solver — rather than clawing it back from the
+        // user — keeps the user's received amount at or above
+        // `min_dst_amount`, and keeps every token transfer authorized by
+        // the solver who signed this call.
+        //
+        // Referral split (#281): when `referral_share_bps` > 0 and the
+        // intent has a `referrer`, the configured slice of the fee goes to
+        // the referrer; the remainder goes to FeeRecipient.  Integer
+        // division dust is absorbed by the FeeRecipient (receives
+        // `fee - referral_amount`, which is >= its proportional share), so no
+        // fee units are silently dropped and the referrer never receives
+        // more than its configured slice.
+        let fee_bps = Self::get_tiered_fee_bps(&env);
+        let fee = fill_amount
+            .checked_mul(fee_bps)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow))
+            .checked_div(10_000)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow));
         if fee > 0 {
+            let cfg = Self::load_config(&env);
             let fee_recipient: Address = env
                 .storage()
                 .instance()
                 .get(&DataKey::FeeRecipient)
                 .unwrap();
-            dst_client.transfer(&solver, &fee_recipient, &fee);
+            match (&intent.referrer, cfg.referral_share_bps) {
+                (Some(referrer_addr), share) if share > 0 => {
+                    let referral_amount = fee
+                        .checked_mul(share)
+                        .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow))
+                        .checked_div(10_000)
+                        .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow));
+                    let recipient_amount = fee - referral_amount;
+                    if referral_amount > 0 {
+                        dst_client.transfer(&solver, referrer_addr, &referral_amount);
+                    }
+                    if recipient_amount > 0 {
+                        dst_client.transfer(&solver, &fee_recipient, &recipient_amount);
+                    }
+                }
+                _ => {
+                    // No referrer or zero share: 100% to FeeRecipient
+                    // (identical to pre-#281 behaviour).
+                    dst_client.transfer(&solver, &fee_recipient, &fee);
+                }
+            }
         }
 
         env.events().publish(
@@ -1911,14 +1975,14 @@ impl IntentSettlement {
     pub fn batch_submit_intent(
         env: Env,
         user: Address,
-        intents: soroban_sdk::Vec<(String, String, i128, Address, i128, Option<u64>)>,
+        intents: soroban_sdk::Vec<(String, String, i128, Address, i128, Option<u64>, Option<Address>)>,
     ) -> soroban_sdk::Vec<BytesN<32>> {
         if intents.len() > MAX_BATCH_SIZE as usize {
             panic_with_error!(&env, Error::ZeroAmount); // No dedicated error; reuse nearest
         }
 
         let mut result = soroban_sdk::Vec::new(&env);
-        for (src_chain, src_token, src_amount, dst_token, min_dst_amount, deadline) in intents {
+        for (src_chain, src_token, src_amount, dst_token, min_dst_amount, deadline, referrer) in intents {
             let intent_id = Self::submit_intent(
                 env.clone(),
                 user.clone(),
@@ -1928,6 +1992,7 @@ impl IntentSettlement {
                 dst_token,
                 min_dst_amount,
                 deadline,
+                referrer,
             );
             result.push_back(intent_id);
         }
@@ -2023,6 +2088,7 @@ impl IntentSettlement {
             fill_window: FILL_WINDOW,
             intent_expiry: INTENT_EXPIRY,
             protocol_fee_bps: PROTOCOL_FEE_BPS,
+            referral_share_bps: DEFAULT_REFERRAL_SHARE_BPS,
         }
     }
 
@@ -2490,6 +2556,7 @@ impl IntentSettlement {
                 fill_window: DEFAULT_FILL_WINDOW,
                 intent_expiry: DEFAULT_INTENT_EXPIRY,
                 protocol_fee_bps: DEFAULT_PROTOCOL_FEE_BPS,
+                referral_share_bps: DEFAULT_REFERRAL_SHARE_BPS,
             })
     }
 
