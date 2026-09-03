@@ -752,6 +752,10 @@ pub enum Error {
     /// chain-name → Wormhole-chain-ID table, so the proof's chain cannot be
     /// validated against it.
     SrcChainNotSupported = 34,
+    /// #281: `submit_intent` was called with a `referrer` equal to the
+    /// submitting `user`.  Self-referral is rejected to prevent a user from
+    /// gaming the referral programme by naming their own address.
+    SelfReferral = 35,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -1068,6 +1072,9 @@ impl IntentSettlement {
         Self::require_admin(&env);
 
         if !(0..=MAX_PROTOCOL_FEE_BPS).contains(&protocol_fee_bps) {
+            panic_with_error!(&env, Error::InvalidConfig);
+        }
+        if !(0..=MAX_REFERRAL_SHARE_BPS).contains(&referral_share_bps) {
             panic_with_error!(&env, Error::InvalidConfig);
         }
         if fill_window < MIN_FILL_WINDOW_SECS {
@@ -1805,6 +1812,14 @@ impl IntentSettlement {
 
     /// User submits a swap intent. No funds are locked on Stellar at this point —
     /// the user initiates the source-chain tx separately.
+    ///
+    /// # Parameters
+    ///
+    /// - `referrer` (optional, default `None`): the address to credit with a share
+    ///   of the protocol fee when the intent is filled.  Must not equal `user`
+    ///   (self-referral is rejected with `Error::SelfReferral`).  The share is
+    ///   governed by `ProtocolConfig.referral_share_bps` and is only paid out
+    ///   when that config value is non-zero.
     #[allow(clippy::too_many_arguments)]
     pub fn submit_intent(
         env: Env,
@@ -1815,6 +1830,7 @@ impl IntentSettlement {
         dst_token: Address,
         min_dst_amount: i128,
         deadline: Option<u64>,
+        referrer: Option<Address>,
     ) -> BytesN<32> {
         // Auth audit: require_auth() is correct. The user must sign to assert
         // ownership of the address receiving output tokens (dst). If a third-party
@@ -1904,6 +1920,15 @@ impl IntentSettlement {
 
         if expiry <= now {
             panic_with_error!(&env, Error::InvalidDeadline);
+        }
+
+        // #281: self-referral guard — a user cannot name their own address
+        // as the referrer, which would let them claim referral rewards on
+        // their own volume.
+        if let Some(r) = &referrer {
+            if r == &user {
+                panic_with_error!(&env, Error::SelfReferral);
+            }
         }
 
         // Widen the preimage with a per-user nonce so that two intents from
@@ -2321,15 +2346,38 @@ impl IntentSettlement {
         // Solver delivers this fill's output to the user, then separately pays
         // the protocol fee. Each transfer happens exactly once.
         let dst_client = token::Client::new(&env, &intent.dst_token);
+
+        // Solver delivers the full requested output to the user.
         dst_client.transfer(&solver, &intent.user, &fill_amount);
 
         if fee > 0 {
+            let cfg = Self::load_config(&env);
             let fee_recipient: Address = env
                 .storage()
                 .instance()
                 .get(&DataKey::FeeRecipient)
                 .unwrap();
-            dst_client.transfer(&solver, &fee_recipient, &fee);
+            match (&intent.referrer, cfg.referral_share_bps) {
+                (Some(referrer_addr), share) if share > 0 => {
+                    let referral_amount = fee
+                        .checked_mul(share)
+                        .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow))
+                        .checked_div(10_000)
+                        .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow));
+                    let recipient_amount = fee - referral_amount;
+                    if referral_amount > 0 {
+                        dst_client.transfer(&solver, referrer_addr, &referral_amount);
+                    }
+                    if recipient_amount > 0 {
+                        dst_client.transfer(&solver, &fee_recipient, &recipient_amount);
+                    }
+                }
+                _ => {
+                    // No referrer or zero share: 100% to FeeRecipient
+                    // (identical to pre-#281 behaviour).
+                    dst_client.transfer(&solver, &fee_recipient, &fee);
+                }
+            }
         }
 
         env.events().publish(
