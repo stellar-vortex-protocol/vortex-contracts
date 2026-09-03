@@ -413,6 +413,48 @@ once they are merged:
 | `WASM size gate` | `ci.yml` (planned) | Blocks merges that grow the wasm by > N KB |
 | `Coverage` | `coverage.yml` (planned) | Advisory until a baseline is established |
 
+### GITHUB_TOKEN permission model
+
+All jobs in `ci.yml` run under a **`permissions: contents: read`** top-level
+policy. This is the minimum required: every job only needs to check out source
+code.
+
+**Why this matters:** Without an explicit `permissions:` block, GitHub applies
+its default token scopes, which include `contents: write` for `push` events on
+the same repository. A compromised third-party action (e.g. `Swatinem/rust-cache`,
+`dtolnay/rust-toolchain`) or a malicious PR-triggered step would then have
+write access to the repository — more privilege than any CI job here actually
+needs.
+
+**Per-job audit (checked 2026-08-31):**
+
+| Job | What it does | Minimum scope |
+|---|---|---|
+| `fmt` | Checkout + `cargo fmt --check` | `contents: read` |
+| `contract` | Checkout + clippy + test + (optional) fmt | `contents: read` |
+| `wasm-size` | Checkout + build + write to `$GITHUB_STEP_SUMMARY` (local runner file, not a GitHub API call) | `contents: read` |
+| `proptest` | Checkout + `cargo test` | `contents: read` |
+| `audit` | Checkout + `cargo audit` (queries RustSec DB over HTTPS, not the GitHub API) | `contents: read` |
+| `mutants` | Checkout + `cargo mutants` (mutates source in a runner-local temp copy) | `contents: read` |
+
+**Adding a job that needs elevated scope:**
+
+If a future job needs to post PR comments, push a commit, create a release, or
+call any other GitHub API, add a **job-level** `permissions:` override with
+only the additional scope that specific job requires. Do not widen the
+workflow-level block:
+
+```yaml
+jobs:
+  my-new-job:
+    permissions:
+      contents: read        # still needed for checkout
+      pull-requests: write  # needed to post a PR comment — only grant here
+```
+
+See the [GitHub docs on workflow permissions](https://docs.github.com/en/actions/security-guides/automatic-token-authentication#permissions-for-the-github_token)
+for the full list of available scopes.
+
 ### MSRV policy
 
 The declared MSRV is **Rust 1.78** (see README.md). CI enforces this via a
