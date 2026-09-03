@@ -6,6 +6,14 @@
  * Reconstructs the full on-chain state of the Vortex intent-settlement
  * contract from its emitted events alone, with zero contract reads.
  *
+ * Note (#198): the contract now also exposes an on-chain `list_solvers(start,
+ * limit)` view that paginates the registered-solver set. An indexer can use it
+ * as a cheaper bootstrap / periodic reconciliation source for `this.solvers`
+ * (one bounded contract read per page) instead of, or alongside, replaying
+ * every `solver_registered` / `solver_deregistered` event from genesis. This
+ * file stays pure event-replay by design; `list_solvers` is the escape hatch
+ * when you don't have the full event history.
+ *
  * This script is intentionally dependency-light (Node.js built-ins only for
  * the state machine; one optional RPC helper) so it can be dropped into any
  * JS/TS project and adapted. The state machine is the valuable artifact —
@@ -141,7 +149,10 @@ class VortexIndexer {
         // Protocol params change; no per-intent state to update.
         break;
       case "paused":
-        // Boolean in value; not needed to reconstruct intent/solver state.
+        // Emitted when contract is paused; not needed to reconstruct intent/solver state.
+        break;
+      case "unpaused":
+        // Emitted when contract is unpaused; not needed to reconstruct intent/solver state.
         break;
       case "tokens_rescued":
         // Admin recovery; no intent/solver state change.
@@ -152,6 +163,8 @@ class VortexIndexer {
       case "dst_token_disallowed":
       case "src_chain_allowed":
       case "src_chain_disallowed":
+      case "dst_allowlist_enabled":
+      case "src_chain_allowlist_enabled":
       case "bond_multiplier_set":
         // Config changes; no per-intent/solver state.
         break;
@@ -245,6 +258,10 @@ class VortexIndexer {
    * solver_deregistered
    * topics: ("solver_deregistered", solver: Address)
    * data:   bond_refunded: i128
+   *
+   * The contract's `list_solvers` view (#198) is kept in sync with exactly
+   * these two events, so a snapshot from `list_solvers` and a full replay of
+   * `solver_registered` / `solver_deregistered` converge on the same set.
    */
   _onSolverDeregistered(ledger, solver, _bondRefunded) {
     this.solvers.delete(solver);

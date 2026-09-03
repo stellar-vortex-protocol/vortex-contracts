@@ -51,6 +51,16 @@ use soroban_sdk::{
     Bytes, BytesN, Env, String, Symbol,
 };
 
+/// Issue #254: how long (in seconds) a `ProofRecord` remains usable to gate a
+/// `fill_intent` call after `receive_message` stores it. Chosen to comfortably
+/// exceed `intent_settlement`'s 300-second `FILL_WINDOW` plus realistic
+/// VAA-relay latency (1–20 minutes across the bridge protocols compared in
+/// `docs/bridge-protocol-comparison.md`), so a proof arriving even somewhat
+/// late is never spuriously rejected as stale. This is distinct from Soroban
+/// storage-TTL archival (issue #51) — this is business-logic staleness, not
+/// ledger-entry expiry.
+pub const PROOF_VALIDITY_WINDOW: u64 = 3600;
+
 #[cfg(test)]
 mod test;
 
@@ -171,9 +181,19 @@ pub struct ProofRegistry;
 impl ProofRegistry {
     // ── Initialization ────────────────────────────────────────────────────────
 
-    /// Deploy-time setup.  Records `admin` and the Wormhole Core contract
-    /// address.  Must be called exactly once.
-    pub fn initialize(env: Env, admin: Address, wormhole_core: Address) {
+    /// Deploy-time setup.  Records `admin`, Wormhole Core contract address,
+    /// and Axelar Gateway address. Must be called exactly once.
+    ///
+    /// Both bridge protocols are registered at init time. The choice of which
+    /// to use for incoming proofs is determined by the authorized emitter/source
+    /// configuration and the calling convention (receive_message vs.
+    /// receive_message_axelar).
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        wormhole_core: Address,
+        axelar_gateway: Address,
+    ) {
         if env.storage().instance().has(&ProofKey::Admin) {
             panic_with_error!(&env, Error::AlreadyInitialized);
         }
@@ -182,6 +202,10 @@ impl ProofRegistry {
         env.storage()
             .instance()
             .set(&ProofKey::WormholeCore, &wormhole_core);
+        env.storage()
+            .instance()
+            .set(&ProofKey::AxelarGateway, &axelar_gateway);
+        Self::bump_instance_ttl(&env);
     }
 
     // ── Admin ─────────────────────────────────────────────────────────────────
@@ -191,9 +215,13 @@ impl ProofRegistry {
     /// accepted by `receive_message`.
     pub fn set_authorized_emitter(env: Env, chain_id: u32, emitter: BytesN<32>) {
         Self::require_admin(&env);
+        if chain_id > u16::MAX as u32 {
+            panic_with_error!(&env, Error::ChainIdOutOfRange);
+        }
         env.storage()
             .instance()
             .set(&ProofKey::AuthorizedEmitter(chain_id), &emitter);
+        Self::bump_instance_ttl(&env);
         env.events().publish(
             (Symbol::new(&env, "emitter_authorized"),),
             (chain_id, emitter),
@@ -327,9 +355,109 @@ impl ProofRegistry {
             .set(&ProofKey::Proof(intent_id.clone()), &record);
         env.storage().persistent().set(&seq_key, &true);
 
+        Self::bump_proof_ttl(&env, &intent_id);
+
         env.events().publish(
             (Symbol::new(&env, "proof_received"),),
             (intent_id, src_chain_id, src_amount, envelope.sequence),
+        );
+    }
+
+    /// Receive and verify an Axelar GMP message, then store the decoded proof.
+    ///
+    /// **Axelar integration rationale:**
+    /// docs/bridge-protocol-comparison.md recommends Axelar GMP as the primary
+    /// bridge protocol for Stellar: it has live Mainnet support (Feb 2026),
+    /// official Stellar developer docs, and active production usage. This
+    /// complementary `receive_message_axelar` path allows proofs to be relayed
+    /// via either Wormhole (legacy/fallback) or Axelar (recommended).
+    ///
+    /// **Payload layout (same as Wormhole for compatibility):**
+    /// The Axelar GMP message body encodes the same 102-byte payload as
+    /// Wormhole's VAA, ensuring intent_settlement sees identical ProofRecords:
+    /// ```
+    ///  [0..32]   intent_id   (BytesN<32>)
+    ///  [32..52]  src_user    (20-byte EVM address)
+    ///  [52..54]  src_chain_id (u16)
+    ///  [54..86]  src_token   (32 bytes, address padded)
+    ///  [86..102] src_amount  (i128, big-endian)
+    /// ```
+    ///
+    /// **Flow (mock behavior for now):**
+    /// In production, this would call the Axelar Gateway contract to verify
+    /// the message signature. For now, like receive_message, this parses the
+    /// payload directly without verification.
+    pub fn receive_message_axelar(
+        env: Env,
+        source_chain: Symbol,
+        source_address: String,
+        payload: Bytes,
+    ) {
+        if payload.len() != 102 {
+            panic_with_error!(&env, Error::InvalidPayload);
+        }
+
+        // Verify source authorization
+        if let Some(authorized_source) = Self::get_authorized_axelar_source(&env, source_chain.clone()) {
+            if authorized_source != source_address {
+                panic_with_error!(&env, Error::EmitterNotAuthorized);
+            }
+        } else {
+            panic_with_error!(&env, Error::EmitterNotAuthorized);
+        }
+
+        // Decode intent_id (bytes 0..32).
+        let intent_id: BytesN<32> = payload.slice(0..32).try_into().unwrap_or_else(|_| {
+            panic_with_error!(&env, Error::InvalidPayload)
+        });
+
+        // Reject replays.
+        if env
+            .storage()
+            .persistent()
+            .has(&ProofKey::Proof(intent_id.clone()))
+        {
+            panic_with_error!(&env, Error::ProofAlreadyExists);
+        }
+
+        // Decode src_chain_id (bytes 52..54) as big-endian u16 → u32.
+        let chain_hi = payload.get(52) as u32;
+        let chain_lo = payload.get(53) as u32;
+        let src_chain_id: u32 = (chain_hi << 8) | chain_lo;
+
+        // Decode src_amount (bytes 86..102) as big-endian i128.
+        let mut amount_bytes = [0u8; 16];
+        let mut idx = 0usize;
+        while idx < 16 {
+            amount_bytes[idx] = payload.get((86 + idx) as u32) as u8;
+            idx += 1;
+        }
+        let src_amount = i128::from_be_bytes(amount_bytes);
+
+        let now = env.ledger().timestamp();
+
+        let src_user = Self::bytes_to_hex_string(&env, &payload.slice(32..52));
+        let src_token = Self::bytes_to_hex_string(&env, &payload.slice(54..86));
+
+        let record = ProofRecord {
+            intent_id: intent_id.clone(),
+            src_user,
+            src_chain_id,
+            src_token,
+            src_amount,
+            vaa_sequence: 0, // Axelar GMP doesn't use sequence numbers like Wormhole
+            received_at: now,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&ProofKey::Proof(intent_id.clone()), &record);
+
+        Self::bump_proof_ttl(&env, &intent_id);
+
+        env.events().publish(
+            (Symbol::new(&env, "proof_received_axelar"),),
+            (intent_id, src_chain_id, src_amount),
         );
     }
 
@@ -343,6 +471,29 @@ impl ProofRegistry {
     /// Returns `true` iff a verified proof exists for `intent_id`.
     pub fn has_proof(env: Env, intent_id: BytesN<32>) -> bool {
         env.storage().persistent().has(&ProofKey::Proof(intent_id))
+    }
+
+    /// Return `intent_id`'s `ProofRecord` only if it exists and is still
+    /// fresh (`now - received_at <= PROOF_VALIDITY_WINDOW`). Panics with
+    /// `Error::ProofNotFound` if no proof was received, or
+    /// `Error::ProofStale` if one exists but has aged out (issue #254).
+    /// This is the entry point `fill_intent`'s proof check (issue #5) is
+    /// intended to call — `get_proof`/`has_proof` remain raw, freshness-blind
+    /// reads for other callers.
+    pub fn get_fresh_proof(env: Env, intent_id: BytesN<32>) -> ProofRecord {
+        let record: ProofRecord = env
+            .storage()
+            .persistent()
+            .get(&ProofKey::Proof(intent_id))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ProofNotFound));
+        let now = env.ledger().timestamp();
+        // Boundary: exactly at the validity window is still fresh (inclusive),
+        // matching this codebase's documented inclusive/exclusive convention
+        // (issue #26) — validity holds through the boundary second itself.
+        if now - record.received_at > PROOF_VALIDITY_WINDOW {
+            panic_with_error!(&env, Error::ProofStale);
+        }
+        record
     }
 
     // ── Test Back-Door ────────────────────────────────────────────────────────
@@ -362,6 +513,7 @@ impl ProofRegistry {
         env.storage()
             .persistent()
             .set(&ProofKey::Proof(record.intent_id.clone()), &record);
+        Self::bump_proof_ttl(&env, &record.intent_id);
     }
 
     /// **Test-only** (`testutils` feature): remove a stored proof.
@@ -415,5 +567,19 @@ impl ProofRegistry {
             i += 1;
         }
         String::from_bytes(env, &buf[..w])
+    }
+
+    fn bump_instance_ttl(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    }
+
+    fn bump_proof_ttl(env: &Env, intent_id: &BytesN<32>) {
+        env.storage().persistent().extend_ttl(
+            &ProofKey::Proof(intent_id.clone()),
+            PROOF_TTL_THRESHOLD,
+            PROOF_TTL_EXTEND_TO,
+        );
     }
 }

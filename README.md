@@ -40,14 +40,54 @@ Core protocol logic (`intent_settlement/src/lib.rs`):
 - `cancel_intent()` — user cancels an open intent
 - `expire_intent()` — permissionless: materializes an unfilled intent's expiry
 - `slash_solver()` — permissionless: slashes a solver that failed to fill
+- `batch_submit_intent()` / `batch_accept_intent()` / `batch_fill_intent()` / `batch_cancel_intent()` — process up to `MAX_BATCH_SIZE` intents in one transaction; a failure on any item reverts the whole batch (#199)
 - `register_solver()` / `deregister_solver()` / `withdraw_bond()` — solver bond management
+- `get_solver()` / `get_solver_count()` / `list_solvers(start, limit)` — read solver records; `list_solvers` paginates the registered-solver set so integrators don't have to replay events (#198)
 - `propose_fee_recipient()` / `accept_fee_recipient()` — timelocked fee-recipient handover (#115, #116)
 - `propose_admin_transfer()` / `accept_admin_transfer()` — timelocked admin-key handover (#115, #116)
 - `pause()` / `unpause()` — admin-only incident response
 - `propose_add_dst_token()` / `execute_add_dst_token()` / `propose_remove_dst_token()` / `execute_remove_dst_token()` / `set_dst_allowlist_enabled()` — timelocked dst_token allowlist changes (#115, #116, #118)
 - `list_allowed_dst_tokens()` — enumerate the full current dst_token allowlist (#117)
 - `add_allowed_src_chain()` / `remove_allowed_src_chain()` / `set_src_chain_allowlist_enabled()` — optional src_chain allowlist (#34)
+- `set_solver_registry()` / `get_solver_registry()` — optional `solver_registry` link; when set, `accept_intent` grants tier fill-window bonuses and `slash_solver` applies tier slash rates. Unset ⇒ every solver is Unranked (pre-integration behaviour) (#197)
 - `rescue_tokens()` — admin-only recovery of non-bond tokens accidentally sent to the contract (#35)
+- `propose_upgrade()` / `execute_upgrade()` / `get_pending_upgrade()` / `migrate()` — timelocked in-place contract upgrade + one-time storage-migration hook (#194)
+- `set_fee_discount_tiers()` / `get_fee_schedule()` — volume-tier protocol-fee discounts for solvers (#192)
+
+#### Protocol fee & volume-tier discounts (#192)
+
+`fill_intent` charges a protocol fee, paid by the solver, on each fill:
+
+```
+fee = fill_amount * effective_fee_bps / 10_000
+```
+
+The base rate is `ProtocolConfig.protocol_fee_bps` (default **5 bps = 0.05%**,
+admin-tunable via `set_config`, hard-capped at 1 000 bps / 10%).
+
+High-volume solvers can earn a discount on that base rate. The admin sets a
+**data-driven discount schedule** — an ordered list of
+`(min_volume, discount_bps)` tiers, ascending by `min_volume`:
+
+```bash
+# 1M dst-token cumulative volume ⇒ 20% off the fee; 10M ⇒ 50% off.
+stellar contract invoke --id <CONTRACT_ID> --source <ADMIN_SECRET_KEY> --network testnet -- \
+  set_fee_discount_tiers --tiers '[[10000000000,2000],[100000000000,5000]]'
+```
+
+- `discount_bps` is a fraction **of the fee**, in hundredths of a percent
+  (`2000` = 20% off, `10000` = fee waived entirely).
+- A solver pays the base rate reduced by the highest tier whose `min_volume`
+  their cumulative `SolverRecord.total_volume` has reached (`>=`, inclusive).
+- The effective rate is always clamped to `0 ..= base` — a discount can never
+  make the fee negative or larger than the un-discounted rate.
+- With **no schedule set (the default)** every solver pays the flat base rate,
+  so this is fully backward-compatible.
+- `set_fee_discount_tiers` rejects (`InvalidFeeTiers`) a schedule that isn't
+  strictly ascending by `min_volume` or has any `discount_bps > 10 000`. Pass
+  an empty list to clear all discounts.
+- Solver bots can call `get_fee_schedule(solver)` to read `(tiers,
+  effective_fee_bps)` and price a fill before submitting.
 
 #### Usage examples
 
@@ -77,6 +117,10 @@ stellar contract invoke --id <CONTRACT_ID> --source <SOLVER_SECRET_KEY> --networ
 # Solver claims exclusive fill rights on an intent
 stellar contract invoke --id <CONTRACT_ID> --source <SOLVER_SECRET_KEY> --network testnet -- \
   accept_intent --solver <SOLVER_ADDRESS> --intent_id <INTENT_ID>
+
+# Read-only: solver self-checks that fill_intent would succeed before spending a transaction
+stellar contract invoke --id <CONTRACT_ID> --source <ANY_SECRET_KEY> --network testnet -- \
+  is_intent_fillable --intent_id <INTENT_ID> --solver <SOLVER_ADDRESS>
 
 # Solver delivers the output and closes out the intent
 stellar contract invoke --id <CONTRACT_ID> --source <SOLVER_SECRET_KEY> --network testnet -- \
@@ -119,6 +163,9 @@ src_amount = human_amount × 10^decimals
 | Arbitrum | USDC | 6 | 250 USDC | `250_000_000` |
 | BSC | BNB | 18 | 2 BNB | `2_000_000_000_000_000_000` |
 | BSC | USDT | 18 | 50 USDT | `50_000_000_000_000_000_000` |
+| Solana | USDC (SPL) | 6 | 500 USDC | `500_000_000` |
+| Solana | wSOL | 9 | 3 SOL | `3_000_000_000` |
+| Solana | BONK | 5 | 1 000 000 BONK | `100_000_000_000` |
 
 The existing README usage example (`src_amount 1000000000000000000` for
 1 ETH on Ethereum) follows this convention.
@@ -128,11 +175,29 @@ The existing README usage example (`src_amount 1000000000000000000` for
 > stablecoins on EVM chains are 6 decimals except on BSC, where USDT and BUSD
 > are 18.
 
+> **Solana — decimals are per-mint, not per-chain.** SPL mints set their own
+> decimals: USDC/USDT are 6, wrapped SOL and most LSTs are 9, BONK is 5. Read
+> the mint account's `decimals`; don't assume. See
+> [docs/132-supported-chains.md §3.2 and §4.8](./docs/132-supported-chains.md).
+
 **On-chain bound:** `src_amount` is stored as `i128`. The contract enforces
 `src_amount <= MAX_AMOUNT` (`10^30`), which accommodates amounts up to
 one trillion 18-decimal tokens. Any value above this threshold causes
-`submit_intent` to return `Error::ZeroAmount` (the generic out-of-range
-guard) in the current implementation.
+`submit_intent` to return `Error::AmountTooLarge` (the dedicated out-of-range
+guard; `ZeroAmount` still covers non-positive values).
+
+**Decimals-aware `min_dst_amount` guard (#252):** in addition to the flat
+`MAX_AMOUNT` bound, `submit_intent` queries `dst_token`'s own `decimals()`
+and rejects a `min_dst_amount` that implies more than `MAX_WHOLE_UNITS`
+(one trillion) whole `dst_token` units at that precision, raising
+`Error::ImplausibleDstAmount`. This is a ceiling-only heuristic — it exists
+to catch a `min_dst_amount` scaled for the wrong decimals class (e.g. an
+18-decimal-scaled amount submitted for a 7-decimal token), not to enforce a
+dust floor, since a legitimate micro-intent on a low-decimal token is
+indistinguishable on-chain from a genuine mistake without off-chain price
+context. A `dst_token` whose `decimals()` call itself fails (not a real
+SEP-41 token) causes `submit_intent` to trap and revert, the same as
+`propose_add_dst_token`'s existing interface probe.
 
 **Stellar side (`min_dst_amount`):** Stellar USDC (Circle's SAC) uses
 **7 decimals** (Stellar's native precision). So 3500 USDC on Stellar is
@@ -155,23 +220,38 @@ stellar contract invoke --id <CONTRACT_ID> --source <SECRET_KEY> --network testn
 
 #### Intent Lifecycle
 
-The diagram below covers all six `IntentState` variants and the functions that
-drive each transition.
+The diagram below covers every `IntentState` variant and the functions that
+drive each transition, including the competitive bid window (issue #191) and the
+escrow / dispute-resolution flow (issue #188).
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Open : submit_intent()
+    [*] --> Open : submit_intent()\n[bid window disabled]
+    [*] --> Bidding : submit_intent()\n[bid window enabled]
+
+    Bidding --> Accepted : settle_bids()\n[best bid, bidder still eligible,\n now >= bid deadline]
+    Bidding --> Open : settle_bids()\n[no usable bid]
+    Open --> Bidding : (never — one-way)
 
     Open --> Accepted : accept_intent()\n[solver registered & active,\n deadline not reached]
     Open --> Cancelled : cancel_intent()\n[caller == intent.user]
     Open --> Expired : expire_intent()\n[now >= deadline]
 
     Accepted --> Filled : fill_intent()\n[fill_amount >= min_dst_amount,\n now < deadline]
-    Accepted --> Open : slash_solver()\n[now >= deadline]\n(10 % bond slashed,\nintent re-opened with fresh deadline)
+    Accepted --> PartiallyFilled : fill_intent()\n[partial fill]
+    Accepted --> Filling : begin_fill()\n[completing fill into escrow,\n starts dispute window]
+    Accepted --> Open : slash_solver()\n[now >= deadline]\n(bond slashed proportionally,\nintent re-opened with fresh deadline)
+
+    Filling --> Filled : release_fill()\n[now >= dispute_deadline,\n no dispute]
+    Filling --> Disputed : dispute_fill()\n[caller == intent.user,\n within dispute window]
+
+    Disputed --> Resolved : resolve_dispute()\n[arbiter; Upheld slashes solver,\n Dismissed does not — user paid either way]
+    Disputed --> Resolved : release_fill()\n[now >= arbiter timeout;\n full escrow to user, no slash]
 
     Filled --> [*]
     Cancelled --> [*]
     Expired --> [*]
+    Resolved --> [*]
 ```
 
 > **Note:** `accept_intent` also lazily sets state to `Expired` (and panics)
@@ -209,15 +289,37 @@ the exact condition that triggers it.
 | 19 | `DeadlineNotReached` | `expire_intent` | `now < intent.deadline` |
 | 20 | `InsufficientBond` | `withdraw_bond` | Requested withdrawal `amount > solver_record.bond_amount` |
 | 21 | `DstTokenNotAllowed` | `submit_intent` | `DstAllowlistEnabled` is `true` and `dst_token` is not in the `AllowedDstToken` list |
-| 25 | `TimelockNotElapsed` | `accept_fee_recipient`, `accept_admin_transfer`, `execute_add_dst_token`, `execute_remove_dst_token` | Called before the `#115` timelock delay since the matching `propose_*` call has elapsed |
-| 26 | `NoPendingAdminTransfer` | `accept_admin_transfer` | No prior `propose_admin_transfer` on record |
-| 27 | `NoPendingDstTokenChange` | `execute_add_dst_token`, `execute_remove_dst_token` | No matching pending proposal for the given token |
+| 22 | `IntentAlreadyExists` | `submit_intent` | Hash collision: an intent with this `intent_id` was already submitted |
+| 23 | `FeeOverflow` | `fill_intent` | Fee arithmetic overflowed (fill amount astronomically large) |
+| 24 | `InvalidTokenInterface` | `add_allowed_dst_token` | Token address does not implement SEP-41 |
+| 25 | `NoPendingFeeRecipient` | `accept_fee_recipient` | No prior `propose_fee_recipient` on record |
+| 26 | `SrcChainNotAllowed` | `submit_intent` | `SrcChainAllowlistEnabled` is `true` and `src_chain` is not in the allowlist |
+| 27 | `RescueProtectedToken` | `rescue_tokens` | Token is the bond token or an active intent's dst_token |
+| 28 | `InvalidSrcToken` | `submit_intent` | `src_token` format does not match the declared `src_chain`'s conventions |
+| 29 | `BatchSizeExceeded` | `batch_submit_intent`, `batch_accept_intent` | Batch size exceeds `MAX_BATCH_SIZE` |
+| 30 | `ExtensionAlreadyGranted` | `request_extension` | Intent has already used its one-time extension |
+| 31 | `InvalidConfig` | `set_config` | Invalid protocol configuration parameters |
+| 32 | `TimelockNotElapsed` | `accept_fee_recipient`, `accept_admin_transfer`, `execute_add_dst_token`, `execute_remove_dst_token` | Called before the `#115` timelock delay since the matching `propose_*` call has elapsed |
+| 33 | `NoPendingAdminTransfer` | `accept_admin_transfer` | No prior `propose_admin_transfer` on record |
+| 34 | `NoPendingDstTokenChange` | `execute_add_dst_token`, `execute_remove_dst_token` | No matching pending proposal for the given token |
+| 35 | `CancelCooldownNotExpired` | `cancel_intent` | Cannot cancel an Accepted intent whose solver was recently slashed (cooldown active) |
+| 36 | `AmountTooLarge` | `submit_intent` | Numeric input (e.g. `src_amount`) is too large to safely handle |
 
 ---
 
-### `solver_registry` (planned)
+### `solver_registry`
 
-Tiered solver staking with reputation scores. See the roadmap below.
+Canonical store for solver **tiers** (Unranked → Platinum) and the per-tier
+perk schedule. `intent_settlement` calls `get_tier(solver)` from
+`accept_intent` / `slash_solver` to grant fill-window bonuses and reduced slash
+rates (#197). Tiers are currently admin-set (`set_tier`); score-gated automatic
+promotion, staking, and migration remain future work (#186). See
+[`docs/solver-registry-design.md`](./docs/solver-registry-design.md).
+
+- `initialize(admin)`
+- `set_tier(solver, tier)` / `clear_tier(solver)` — admin-only
+- `get_tier(solver) -> u32` — defaults to `0` (Unranked)
+- `get_fill_window_bonus_bps(tier)` / `get_slash_bps(tier)` — the perk schedule
 
 ---
 
@@ -236,10 +338,15 @@ registered via `add_allowed_src_chain()` are accepted.
 | `"optimism"` | OP Mainnet | EVM L2 | `0x` + 40 hex chars |
 | `"avalanche"` | Avalanche C-Chain | EVM | `0x` + 40 hex chars |
 | `"bsc"` | BNB Smart Chain | EVM | `0x` + 40 hex chars |
-| `"solana"` | Solana Mainnet Beta | SVM | base58 mint address *(planned)* |
+| `"solana"` | Solana Mainnet Beta | SVM | base58 SPL mint, 32–44 chars, no `0x` |
+
+`submit_intent` format-validates `src_token` on-chain for the five EVM chains
+above (`ethereum`/`base`/`polygon`/`arbitrum`/`optimism`) and for `solana`
+(base58 alphabet, 32–44 chars). `avalanche` and `bsc` are accepted but their
+`src_token` is not yet format-checked on-chain.
 
 For the full token address reference (contract addresses, decimals per chain,
-and allowlist management commands) see
+Solana SPL mints, and allowlist management commands) see
 [docs/132-supported-chains.md](./docs/132-supported-chains.md).
 
 > **Decimal reminder:** EVM tokens use 18 decimals for native assets and
@@ -444,7 +551,7 @@ def compute_intent_id(user_address: str, src_chain: str, src_amount: int, timest
 - [x] **Contract test suite** — `soroban_sdk` testutils coverage for the full intent
       lifecycle, solver bonding/slashing, admin controls, pause, and storage TTL
       management
-- [ ] **Solver registry contract** — tiered staking, reputation NFT, dispute resolution
+- [~] **Solver registry contract** — tier lookup + perk schedule shipped and wired into `accept_intent` / `slash_solver` (#197); score-gated promotion, staking, reputation NFT, dispute resolution still to do (#186)
 - [ ] **Cross-chain proof verification** — verify source-chain tx on-chain via Stellar oracle / messaging infra
 
 ---

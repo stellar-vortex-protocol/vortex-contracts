@@ -76,6 +76,25 @@ with a positive `bond_amount`. The contract checks that the *cumulative* total
 meets `MIN_BOND`, so top-ups smaller than 50 USDC are accepted once you are
 already above the threshold.
 
+### Declaring served routes (optional)
+
+If your bot only bridges specific `src_chain`/`dst_token` combinations, you can
+advertise that on-chain via `set_solver_routes` so discovery tooling can filter
+to solvers that actually service a given route. This is purely advisory:
+`accept_intent` never enforces it, so you may still accept any intent you're
+otherwise eligible for regardless of what you've declared.
+
+```bash
+stellar contract invoke --id <CONTRACT_ID> --source <SOLVER_SECRET_KEY> --network testnet -- \
+  set_solver_routes \
+  --solver <SOLVER_ADDRESS> \
+  --src_chains '["ethereum","base"]' \
+  --dst_tokens '["<USDC_SAC_ADDRESS>"]'
+```
+
+Never calling `set_solver_routes` (the default) reads back as "no declared
+preference" — i.e. you're assumed to serve every route.
+
 ---
 
 ## Startup Eligibility Check
@@ -143,6 +162,15 @@ The contract emits Soroban events for every state transition. Your bot should
 subscribe to the ledger event stream and filter on `CONTRACT_ID` plus the topic
 symbols listed below.
 
+> **On-chain alternative for discovery (#249):** if all you need is *what's
+> currently fillable*, you don't have to run a full event-replay index just to
+> answer that question. Call `list_open_intents(offset, limit)` to page
+> directly through the contract's own list of `Open`/`PartiallyFilled` intent
+> IDs, bounded per call. Event subscription is still the right tool for
+> reacting to state transitions in real time (fills, cancellations, slashes);
+> `list_open_intents` is a cheaper way to bootstrap or periodically
+> reconcile your local view of open opportunities.
+
 ### Event Topics
 
 | Event symbol        | Emitted by         | Second topic (address) | Data value                                  |
@@ -198,9 +226,9 @@ The `IntentRecord` fields your bot needs for quoting:
 
 | Field            | Meaning                                           |
 |------------------|---------------------------------------------------|
-| `src_chain`      | Source chain (`"ethereum"`, `"base"`, etc.)       |
-| `src_token`      | Token contract address on the source chain        |
-| `src_amount`     | Amount to bridge (in source token's smallest unit)|
+| `src_chain`      | Source chain (`"ethereum"`, `"base"`, `"solana"`, …) |
+| `src_token`      | Token address on the source chain (see per-chain formats below) |
+| `src_amount`     | Amount to bridge, in the source token's smallest unit |
 | `dst_token`      | SAC/SEP-41 address you must deliver on Stellar    |
 | `min_dst_amount` | Minimum amount the user will accept               |
 | `deadline`       | Unix timestamp; intent is worthless after this    |
@@ -211,9 +239,41 @@ Reject the intent immediately if:
 - `deadline - now < FILL_WINDOW` (not enough time to accept + fill)
 - Your quoted cost exceeds `min_dst_amount + fee` (unprofitable)
 
+#### Interpreting `src_token` / `src_amount` per source chain
+
+`src_amount` is always `human_amount × 10^decimals` in the source token's
+smallest unit — but `decimals` and the `src_token` string differ by chain:
+
+| `src_chain` | `src_token` format | How to get `decimals` |
+|---|---|---|
+| EVM (`ethereum`, `base`, `polygon`, `arbitrum`, `optimism`, `avalanche`, `bsc`) | `0x` + 40 hex chars | `decimals()` view on the ERC-20; usually 18 (native) / 6 (stablecoins), **but 18 for USDT/USDC on BSC** |
+| `solana` | base58 SPL **mint address**, 32–44 chars, no `0x` | `decimals` field of the mint account (`getMint` / `getTokenSupply`). **Not uniform:** USDC/USDT = 6, wrapped SOL and most LSTs = 9, BONK = 5 |
+
+For a Solana-sourced intent your bot must:
+1. Treat `src_token` as an SPL mint address — resolve it against your Solana
+   RPC / token list, not an EVM registry.
+2. Fetch that mint's `decimals` (do **not** assume 6) to convert `src_amount`
+   back to a human amount for quoting.
+3. Price and perform the source-chain leg on Solana (transfer the SPL token
+   from the user's escrow), exactly as you would the EVM leg — the Stellar
+   contract does not verify it; your bond is the guarantee (see Step 2).
+
+See [docs/132-supported-chains.md](./132-supported-chains.md) §3.2 and §4.8 for
+the base58 rules, sample mints, and decimals.
+
 ---
 
 ## The Accept → Fill Loop
+
+> **Scoped authorization (2026 update):** `accept_intent` and `fill_intent`
+> now call `require_auth_for_args` instead of `require_auth`, scoped to
+> `(intent_id)` and `(solver, intent_id, fill_amount)` respectively (see
+> `docs/auth-audit.md`). If you invoke directly via `stellar contract invoke`
+> or the standard SDK contract client with your own solver key, this is
+> transparent — the simulated auth entries are signed for you as before. It
+> only matters if you construct and sign `SorobanAuthorizationEntry` values
+> by hand (e.g. for a delegated/invoker-contract flow): the signed payload
+> must now match the specific call's arguments, not just the function name.
 
 ### Step 1 — Accept
 
@@ -311,6 +371,10 @@ miss the `FILL_WINDOW`:
    solver can accept it.
 3. If the slash drops your bond below `MIN_BOND`, `is_active` is set to `false`
    and you must top up before accepting new intents.
+4. A slash also starts a `SLASH_COOLDOWN` (1 hour) during which `accept_intent`
+   rejects you even if your bond is healthy. Call `get_slash_cooldown_remaining`
+   to find out exactly how many seconds are left, instead of guessing or
+   reimplementing the cooldown arithmetic yourself.
 
 To recover:
 
@@ -319,13 +383,26 @@ To recover:
 stellar contract invoke --id <CONTRACT_ID> --source <ANY_KEY> --network testnet -- \
   get_solver --solver <SOLVER_ADDRESS>
 
+# Check whether you're still inside the post-slash cooldown window
+stellar contract invoke --id <CONTRACT_ID> --source <ANY_KEY> --network testnet -- \
+  get_slash_cooldown_remaining --solver <SOLVER_ADDRESS>
+
 # Top up to re-activate (must bring total back to ≥ MIN_BOND)
 stellar contract invoke --id <CONTRACT_ID> --source <SOLVER_SECRET_KEY> --network testnet -- \
   register_solver --solver <SOLVER_ADDRESS> --bond_amount <TOP_UP_AMOUNT>
 
-# Confirm you're eligible again
+# Confirm you're eligible again (only true once the cooldown above is 0)
 stellar contract invoke --id <CONTRACT_ID> --source <ANY_KEY> --network testnet -- \
   is_solver_eligible --solver <SOLVER_ADDRESS>
+```
+
+If your bot crashes mid-fill-window and comes back up not knowing what it was
+working on, call `get_solver_intents` to rediscover every `intent_id` you
+currently hold `Accepted`, instead of replaying events since registration:
+
+```bash
+stellar contract invoke --id <CONTRACT_ID> --source <ANY_KEY> --network testnet -- \
+  get_solver_intents --solver <SOLVER_ADDRESS>
 ```
 
 ### Concurrent intent acceptance

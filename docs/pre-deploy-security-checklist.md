@@ -18,9 +18,11 @@ checked off as their linked PR is merged into `main`.
 
 ### Authorization hardening
 
-- [ ] **#45 — Audit all `require_auth()` call sites for correctness vs. Soroban's `require_auth_for_args`**
+- [x] **#45 — Audit all `require_auth()` call sites for correctness vs. Soroban's `require_auth_for_args`**
   Review all 12 call sites; document per-function conclusion; upgrade any site
   where scoped authorization meaningfully reduces delegated-execution risk.
+  See `docs/auth-audit.md`. `submit_intent`, `accept_intent`, and `fill_intent`
+  upgraded to `require_auth_for_args`; all other sites kept as-is.
 
 ### Economic / bond sizing
 

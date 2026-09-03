@@ -175,6 +175,11 @@ used in validation and must be kept in sync with the supported-chains list
 Strings not in this table: `fill_intent` panics with `Error::SrcChainNotSupported`
 (a new error code, separate from the allowlist variant).
 
+**Implemented** (issue #253): this table is realized as
+`IntentSettlement::src_chain_to_wormhole_id` in `intent_settlement/src/lib.rs`,
+tested against every chain in the table above. `fill_intent` itself does not
+yet call it — that wiring is issue #5's proof-gated fill logic.
+
 ---
 
 ## 5. Dispute Path for Contested Proofs

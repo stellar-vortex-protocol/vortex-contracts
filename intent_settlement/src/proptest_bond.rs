@@ -2,7 +2,11 @@
 //!
 //! Invariant: at every point in time,
 //!
-//!   contract.bond_balance == Σ solver_record.bond_amount  (for all registered solvers)
+//!   contract.bond_balance == Σ solver_bond(solver, BOND_TOKEN)  (all registered solvers)
+//!
+//! Issue #187 made bonds per-token. This sequence only ever touches the default
+//! bond token, so the per-token invariant for that token is exactly the global
+//! invariant here; `bond_amount` is the mirror of `SolverBond(solver, default)`.
 //!
 //! This file uses `proptest` to generate random but *valid* call sequences from
 //! the state-machine below and asserts the invariant holds after every step.
@@ -17,13 +21,19 @@
 
 #![cfg(test)]
 
+// The crate is `#![no_std]`; the proptest harness pulls in `std`, so bring
+// `std::vec::Vec` into scope explicitly for the fixture's owned collections.
+extern crate std;
+use std::vec::Vec;
+
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token, Address, Env, String,
 };
+use std::vec::Vec;
 
-use crate::{IntentSettlement, IntentSettlementClient, FILL_WINDOW, MIN_BOND};
+use crate::{IntentSettlement, IntentSettlementClient, FILL_WINDOW, MIN_BOND, SLASH_COOLDOWN};
 
 // ─── Tunables ────────────────────────────────────────────────────────────────────
 
@@ -89,6 +99,9 @@ impl Fixture {
         token::StellarAssetClient::new(&self.env, &self.bond_token)
     }
 
+    // Kept for symmetry with the unit-test fixture; this proptest models only
+    // the bond-moving calls, so no dst-token minting happens here.
+    #[allow(dead_code)]
     fn dst_admin(&self) -> token::StellarAssetClient<'_> {
         token::StellarAssetClient::new(&self.env, &self.dst_token)
     }
@@ -117,8 +130,7 @@ impl Fixture {
         let contract_bal = self.contract_bond_balance();
         let sum = self.sum_bond_amounts();
         assert_eq!(
-            contract_bal,
-            sum,
+            contract_bal, sum,
             "Bond conservation violated: contract holds {contract_bal} but Σ bond_amounts = {sum}"
         );
     }
@@ -237,7 +249,10 @@ fn execute_step(f: &mut Fixture, step: &Step) {
             }
 
             // Submit a fresh intent and immediately accept + slash it.
-            f.pass_time(1); // ensure unique timestamp → unique intent_id
+            // Advance past SLASH_COOLDOWN first so a solver slashed in an
+            // earlier step is eligible to accept again (accept_intent enforces
+            // the post-slash cooldown).
+            f.pass_time(SLASH_COOLDOWN + 1);
             let intent_id = c.submit_intent(
                 &f.user,
                 &String::from_str(&f.env, "ethereum"),
@@ -247,9 +262,28 @@ fn execute_step(f: &mut Fixture, step: &Step) {
                 &(MIN_BOND / 100), // min_dst_amount
                 &(None as Option<u64>),
             );
+            let bond_before = c.get_solver(solver).unwrap().bond_amount;
             c.accept_intent(solver, &intent_id);
             f.pass_time(FILL_WINDOW + 1);
             c.slash_solver(&intent_id);
+            let bond_after = c.get_solver(solver).unwrap().bond_amount;
+
+            // Issue #193: the slash is now proportional to the *intent* the
+            // solver failed to fill, not a flat 10% of the bond. Here the
+            // outstanding output is `min_dst_amount = MIN_BOND / 100` and the
+            // bond always exceeds it, so the expected slash is
+            // `min(min_dst_amount, bond) / 10 = MIN_BOND / 1000`, floored at 1
+            // and capped at 10% of the bond (issue #32 / the flat-rate cap).
+            // Exact mirror of `IntentSettlement::compute_slash_amount`.
+            let unfilled = MIN_BOND / 100;
+            let exposure = unfilled.min(bond_before).max(0);
+            let cap = ((bond_before / 10_000) * 1_000).min(bond_before).max(1);
+            let expected = (exposure / 10).max(1).min(cap);
+            assert_eq!(
+                bond_before - bond_after,
+                expected,
+                "issue #193 proportional slash formula"
+            );
         }
     }
 }

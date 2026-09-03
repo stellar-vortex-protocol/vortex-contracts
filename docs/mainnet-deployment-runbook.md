@@ -368,10 +368,88 @@ before investigating.
 
 ---
 
+## Contract Upgrade (#194)
+
+The contract has an in-place upgrade path, so a bug fix or new feature does
+**not** require redeploying to a new address and re-onboarding solvers. It is
+admin-only and timelocked (`ADMIN_TIMELOCK_DELAY`, 48 h) exactly like the
+other sensitive admin actions, and every step emits an event.
+
+### 1. Build and upload the new Wasm
+
+```bash
+# From the repo root, build the optimized wasm (see "Build the Release Artifact").
+stellar contract upload \
+  --source <ADMIN_SECRET_KEY> \
+  --network mainnet \
+  --wasm intent_settlement/target/wasm32-unknown-unknown/release/vortex_intent_settlement.wasm
+# Prints the 32-byte wasm hash (hex). Save it as $NEW_WASM_HASH.
+```
+
+### 2. Propose the upgrade
+
+```bash
+stellar contract invoke --id $CONTRACT_ID --source <ADMIN_SECRET_KEY> \
+  --network mainnet -- \
+  propose_upgrade --new_wasm_hash $NEW_WASM_HASH
+```
+
+Emits `upgrade_proposed(new_wasm_hash, eta)`. `eta` is the earliest ledger
+timestamp `execute_upgrade` can run. Off-chain monitors should alert on this
+event. To read it back later: `get_pending_upgrade` → `Some((hash, eta))`.
+Re-running `propose_upgrade` with a different hash replaces the proposal and
+resets the 48 h clock.
+
+### 3. Execute after the timelock
+
+```bash
+# Only after the current ledger time >= eta.
+stellar contract invoke --id $CONTRACT_ID --source <ADMIN_SECRET_KEY> \
+  --network mainnet -- \
+  execute_upgrade --new_wasm_hash $NEW_WASM_HASH
+```
+
+Fails with `TimelockNotElapsed (29)` before `eta`, `Unauthorized (2)` if the
+hash doesn't match the proposal, `NoPendingUpgrade (35)` if nothing is
+pending. On success it swaps the code and emits `upgraded(new_wasm_hash)`.
+The contract address, all storage, admin, config, solver bonds, and in-flight
+intents are unchanged.
+
+### 4. Run the migration hook (only if the release requires it)
+
+If the new release's changelog says it changes a persisted storage shape,
+run the one-time migration immediately after `execute_upgrade`:
+
+```bash
+stellar contract invoke --id $CONTRACT_ID --source <ADMIN_SECRET_KEY> \
+  --network mainnet -- \
+  migrate
+```
+
+`migrate` is guarded by an on-chain version marker: it runs once per release
+and returns `AlreadyMigrated (36)` on any subsequent call, so a repeated or
+double-applied migration is impossible. Releases with no storage change need
+no `migrate` call (a fresh `initialize` already stamps the current version).
+Emits `migrated(from_version, to_version)`.
+
+### Upgrade safety notes
+
+- An upgrade landing while intents are `Open` / `Accepted` does not touch
+  their storage; the new code reads the same entries.
+- Test the exact upgrade on testnet first: deploy current, create state,
+  `propose_upgrade` + `execute_upgrade` to the new hash, verify `get_intent`
+  / `get_solver` / `get_stats` still return the expected values, then run any
+  `migrate`.
+
+---
+
 ## Rollback Procedure
 
-Soroban contracts are immutable once deployed — there is no on-chain "undo".
-The rollback strategy is:
+Rolling *back* a bad upgrade uses the same upgrade path in reverse: `stellar
+contract upload` the previous known-good wasm and `propose_upgrade` /
+`execute_upgrade` to its hash (still subject to the 48 h timelock — `pause`
+first if the regression is actively harmful). If the contract cannot be
+recovered by re-upgrading, the fallback is a fresh deployment:
 
 1. **Immediately pause the contract** to halt new activity (see below).
 2. **Deploy a patched contract** to a new address.
@@ -418,6 +496,24 @@ stellar contract invoke \
   --network mainnet -- \
   unpause
 ```
+
+### Pause the proof registry (admin only)
+
+`proof_registry` has its own independent pause flag (issue #264), separate
+from `intent_settlement`'s. Use this if you suspect a forged-proof attack or
+other proof-ingestion incident:
+
+```bash
+stellar contract invoke \
+  --id $PROOF_REGISTRY_CONTRACT_ID \
+  --source <ADMIN_SECRET_KEY> \
+  --network mainnet -- \
+  pause
+```
+
+Effect: `receive_message` reverts with `ContractPaused (8)`. `get_proof` and
+`has_proof` remain available. Resume with the same `unpause` invocation used
+for `intent_settlement`, targeted at `$PROOF_REGISTRY_CONTRACT_ID`.
 
 ### Rotate admin key
 

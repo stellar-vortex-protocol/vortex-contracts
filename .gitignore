@@ -41,3 +41,6 @@ Thumbs.db
 # Testnet deployment — contains secret keys, never commit
 deploy-testnet.env
 .last-deploy-testnet
+
+# proptest failure-seed artifacts
+proptest-regressions/

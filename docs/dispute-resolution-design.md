@@ -190,5 +190,11 @@ cross-chain proof oracle).
 
 ---
 
-*Design status: Draft — open for review before implementation begins.*  
-*Last updated: 2026-07-27*
+*Design status: Implemented in `intent_settlement` (issue #188).*  
+*The escrow/dispute flow ships as `begin_fill` → `dispute_fill` /*
+*`resolve_dispute` / `release_fill`, with states `Filling` / `Disputed` /*
+*`Resolved` and enum `DisputeResolution { Upheld, Dismissed }`. Deviations from*
+*this sketch: the permissionless timeout and clean release are unified into a*
+*single `release_fill` entrypoint; the arbiter is stored at `DataKey::Arbiter`*
+*(defaulting to `Admin`) via `set_arbiter`, slightly ahead of the "v2" note.*  
+*Last updated: 2026-08-28*

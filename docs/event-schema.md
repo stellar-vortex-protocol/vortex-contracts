@@ -101,18 +101,32 @@ data   : (min_bond: i128, fill_window: u64, intent_expiry: u64, protocol_fee_bps
 
 #### `paused`
 
-Emitted by both `pause` and `unpause`. The data value distinguishes the
-direction: `true` means the contract is now paused, `false` means it is now
-unpaused.
+Emitted by `pause` when the contract is halted for incident response.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | **topics[0]** | `Symbol` | `"paused"` |
-| **data** | `bool` | `true` = contract paused; `false` = contract unpaused |
+| **data** | `()` | (empty payload — topic alone is sufficient) |
 
 ```
 topics : ("paused",)
-data   : <is_paused: bool>
+data   : ()
+```
+
+---
+
+#### `unpaused`
+
+Emitted by `unpause` when the contract resumes normal operation after a pause.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **topics[0]** | `Symbol` | `"unpaused"` |
+| **data** | `()` | (empty payload — topic alone is sufficient) |
+
+```
+topics : ("unpaused",)
+data   : ()
 ```
 
 ---
@@ -201,6 +215,40 @@ Emitted by `remove_allowed_src_chain`.
 ```
 topics : ("src_chain_disallowed",)
 data   : <chain: String>
+```
+
+---
+
+#### `dst_allowlist_enabled`
+
+Emitted by `set_dst_allowlist_enabled` to signal a change in whether the
+destination token allowlist is actively enforced by `submit_intent`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **topics[0]** | `Symbol` | `"dst_allowlist_enabled"` |
+| **data** | `bool` | `true` = allowlist enforcement active; `false` = disabled |
+
+```
+topics : ("dst_allowlist_enabled",)
+data   : <enabled: bool>
+```
+
+---
+
+#### `src_chain_allowlist_enabled`
+
+Emitted by `set_src_chain_allowlist_enabled` to signal a change in whether
+the source-chain allowlist is actively enforced by `submit_intent`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **topics[0]** | `Symbol` | `"src_chain_allowlist_enabled"` |
+| **data** | `bool` | `true` = allowlist enforcement active; `false` = disabled |
+
+```
+topics : ("src_chain_allowlist_enabled",)
+data   : <enabled: bool>
 ```
 
 ---
@@ -437,10 +485,15 @@ ledger order.
 | `Open` | `Expired` | `intent_expired` |
 | `Accepted` | `PartiallyFilled` → re-opens as `Open` | `intent_filled` (partial) |
 | `Accepted` | `Filled` | `intent_filled` (cumulative ≥ min_dst_amount) |
-| `Accepted` | `Open` (re-opened) | `solver_slashed` |
+| `Accepted` | `Open` / `PartiallyFilled` (re-opened) | `solver_slashed` (`slash_cycles < max_slash_cycles`) |
+| `Accepted` | `Abandoned` | `solver_slashed` + `intent_abandoned` (`slash_cycles >= max_slash_cycles`) |
 | `PartiallyFilled` | `Accepted` | `intent_accepted` |
 | `PartiallyFilled` | `Expired` | `intent_expired` |
 | `PartiallyFilled` | `Cancelled` | `intent_cancelled` |
+
+`Abandoned` is terminal: an intent that hits `ProtocolConfig.max_slash_cycles`
+repeated `Accepted → Slashed` cycles no longer re-opens; the user must
+resubmit a fresh intent (issue #241).
 
 > **Bidding mode:** If bid-window mode is active, `intent_submitted` opens the
 > intent in `Bidding` state. `bid_intent` events (not yet emitted as named
@@ -476,3 +529,10 @@ ledger order.
    before reaching `Filled`. Each emission carries that fill's incremental
    `fill_amount` (not cumulative). Sum all `intent_filled.data[1]` for the
    same `intent_id` to get total volume for that intent.
+
+   As of #244, this no longer strictly requires event replay:
+   `get_intent_fill_history(intent_id)` returns an on-chain
+   `Vec<(solver, amount, timestamp)>` log of each fill for that intent
+   directly, bounded at `MAX_FILL_HISTORY` (20) entries with the oldest
+   entry evicted first once the cap is reached. For intents with more than
+   20 partial fills, event replay is still required for the full history.

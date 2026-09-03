@@ -31,10 +31,17 @@ These are the values the contract recognises via `add_allowed_src_chain()`:
 | `"optimism"` | OP Mainnet | EVM (L2, Optimism) | 24 | Supported |
 | `"avalanche"` | Avalanche C-Chain | EVM | 6 | Supported |
 | `"bsc"` | BNB Smart Chain | EVM | 4 | Supported |
-| `"solana"` | Solana Mainnet Beta | SVM | 1 | Planned |
+| `"solana"` | Solana Mainnet Beta | SVM | 1 | Supported |
 
 > **Case-sensitive.** The contract stores and compares these strings literally.
 > `"Ethereum"` and `"ETHEREUM"` are not the same as `"ethereum"`.
+
+> **On-chain `src_token` format validation** (`validate_src_token`, #127) runs
+> for `"ethereum"`, `"base"`, `"polygon"`, `"arbitrum"`, `"optimism"` (EVM
+> rules) and `"solana"` (base58 rules). `"avalanche"` and `"bsc"` are accepted
+> as source chains but their `src_token` is **not** format-checked on-chain yet
+> — off-chain tooling must validate those itself. Adding them to the validator
+> is tracked separately.
 
 ---
 
@@ -62,19 +69,45 @@ checksummed form for human readability).
 > Note the escaped inner quotes — the Stellar CLI requires string arguments to
 > be wrapped in `'"…"'`.
 
-### 3.2 Solana (Planned)
+### 3.2 Solana
 
-Solana token addresses are base58-encoded 32-byte public keys.
+A Solana token is identified by its **SPL mint address**: the base58 encoding
+of a 32-byte ed25519 public key (a `solana_program::pubkey::Pubkey`). This is
+the same string wallets and explorers display for a token.
 
 **Format:**
 ```
-<base58-encoded mint address>
+<base58 string, 32–44 characters, no "0x" prefix>
 ```
 
-**Example:**
+**On-chain validation rules** (`validate_src_token` for `src_chain = "solana"`):
+
+| Rule | Value | Why |
+|---|---|---|
+| Length | 32–44 characters inclusive | A 32-byte value base58-encodes to at most 44 digits; a leading-zero-byte key can be as short as 32. Real mints observed are 43–44. |
+| Alphabet | Bitcoin/IPFS base58: `123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz` | Standard base58; **excludes `0` (zero), `O`, `I`, `l`** to avoid visual ambiguity. |
+| No `0x` prefix | rejected | Solana has no `0x` convention; a `0x…` string is an EVM address submitted against the wrong chain. |
+
+A value that breaks any rule makes `submit_intent` fail with
+`Error::InvalidSrcToken` (28).
+
+> **Verification source.** The 32-byte key size and base58 rendering are from
+> the Solana SDK (`solana_program::pubkey::Pubkey`, `bs58` crate — Bitcoin
+> alphabet). The 32–44 character bound and the sample mints in §4.8 were
+> checked against Solana Explorer / the Solana token list.
+
+**Example CLI usage:**
+```bash
+--src_chain '"solana"' \
+--src_token '"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"'   # USDC (SPL), 44 chars
 ```
-EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v   # USDC on Solana
-```
+
+> **Decimals differ from EVM.** SPL token decimals are set per mint and are
+> **not** uniformly 6 or 18. USDC and USDT are 6, but wrapped SOL is 9 and many
+> project tokens use other values. Always read the mint's `decimals` field
+> (e.g. `getTokenSupply` / the mint account) rather than assuming — see §4.8
+> and the [Decimal Normalization](../README.md#decimal-normalization-for-src_amount)
+> table in the README (which now has a Solana row).
 
 ---
 
@@ -150,6 +183,24 @@ token contracts can be migrated or deprecated.
 > See [Decimal Normalization](../README.md#decimal-normalization-for-src_amount)
 > in the README for the full worked-example table.
 
+### 4.8 Solana (SPL mints)
+
+Addresses are base58 SPL mint addresses. Unlike EVM, **decimals vary widely per
+mint** — do not assume 6 or 18.
+
+| Token | Mint address | Decimals |
+|---|---|---|
+| USDC | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` | 6 |
+| USDT | `Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB` | 6 |
+| Wrapped SOL (wSOL) | `So11111111111111111111111111111111111111112` | 9 |
+| JitoSOL | `J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn` | 9 |
+| BONK | `DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263` | 5 |
+
+> **Solana decimals pitfall:** wSOL and most LSTs are **9 decimals**, BONK is
+> **5**, stablecoins are **6**. `src_amount = human_amount × 10^decimals` still
+> holds, but `decimals` must be read from the mint account per token. Verify
+> mint addresses against Solana Explorer before production use.
+
 ---
 
 ## 5. Allowlist Management
@@ -207,6 +258,10 @@ to a Wormhole chain ID and compares it against `proof.src_chain_id`. The
 mapping table lives in §4 of [129-proof-mismatch-fallback.md](./129-proof-mismatch-fallback.md)
 and must be kept in sync with the canonical strings listed in §2 of this
 document.
+
+**Implemented** (issue #253): `IntentSettlement::src_chain_to_wormhole_id` in
+`intent_settlement/src/lib.rs` is the single source of truth for this mapping.
+An unmapped `src_chain` string fails closed with `Error::SrcChainNotSupported`.
 
 ---
 

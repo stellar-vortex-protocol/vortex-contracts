@@ -1,8 +1,23 @@
 # Design Doc: Multi-Bond Token Support with Per-Token Accounting
 
-**Issue:** [#60](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/60)  
+**Issue:** [#60](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/60)
+(implementation tracked in #187)  
 **Branch:** `docs/task-spike`  
-**Status:** Design complete — ready for implementation
+**Status:** Implemented in `intent_settlement` (issue #187).
+
+> **Implementation note.** The shipped version is *additive* rather than the
+> `bond_amount`-removing schema below: `SolverRecord.bond_amount` is kept as the
+> mirror of the default token's `DataKey::SolverBond(solver, default)` entry so
+> pre-#187 readers and the bond-conservation proptest keep working unmodified,
+> and `SolverRecord` gains `bond_tokens: Vec<Address>` for enumeration.
+> `register_solver` / `withdraw_bond` / `accept_intent` keep their original
+> signatures (pinned to the default token) and gain `*_with_token` /
+> `*_token` siblings for the multi-token path, matching "Option A" in §7.2.
+> Per-token minimums are `DataKey::MinBond(token)` (admin-set via
+> `set_bond_token_min`), falling back to `ProtocolConfig.min_bond` for the
+> default token and `MIN_BOND` otherwise. Error discriminants differ from §6
+> to avoid colliding with existing variants: `BondTokenNotAllowed = 40`,
+> `TooManyBondTokens = 41`.
 
 ---
 

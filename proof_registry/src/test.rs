@@ -212,6 +212,28 @@ fn get_authorized_emitter_returns_none_if_unset() {
     assert_eq!(ctx.client().get_authorized_emitter(&2), None);
 }
 
+// #262 — the real Wormhole chain-ID space is 16 bits; chain_id must be
+// rejected once it exceeds u16::MAX.
+#[test]
+fn set_authorized_emitter_accepts_u16_max_boundary() {
+    let ctx = setup();
+    let c = ctx.client();
+    let emitter: BytesN<32> = BytesN::from_array(&ctx.env, &[0xde; 32]);
+
+    c.set_authorized_emitter(&(u16::MAX as u32), &emitter);
+    assert_eq!(c.get_authorized_emitter(&(u16::MAX as u32)), Some(emitter));
+}
+
+#[test]
+fn set_authorized_emitter_rejects_above_u16_max() {
+    let ctx = setup();
+    let c = ctx.client();
+    let emitter: BytesN<32> = BytesN::from_array(&ctx.env, &[0xde; 32]);
+
+    let res = c.try_set_authorized_emitter(&(u16::MAX as u32 + 1), &emitter);
+    assert_eq!(res, Err(Ok(Error::ChainIdOutOfRange.into())));
+}
+
 #[test]
 fn remove_authorized_emitter_clears_entry() {
     let ctx = setup();

@@ -161,6 +161,29 @@ def decide(config: BotConfig, intent: dict[str, Any], solver: dict[str, Any], no
     return Decision(True, "accepted risk/profit checks", expected_profit, bond_utilization_bps)
 
 
+def get_intents_batch(config: BotConfig, intent_ids: list[str]) -> list[Any]:
+    """Fetch many candidate intents in a single RPC round-trip via
+    get_intents_batch, instead of one stellar_view call per id. Each
+    position mirrors get_intent's semantics: an unknown id comes back None.
+    """
+    if not intent_ids:
+        return []
+    return stellar_view(config, "get_intents_batch", "--intent_ids", json.dumps(intent_ids))
+
+
+def screen_candidates(config: BotConfig, intent_ids: list[str]) -> list[str]:
+    """Given a list of candidate intent ids (e.g. from list_open_intents,
+    issue #64), return only the ones still Open/PartiallyFilled -- cheaply,
+    via one batched view call rather than one per candidate.
+    """
+    records = get_intents_batch(config, intent_ids)
+    return [
+        intent_id
+        for intent_id, record in zip(intent_ids, records)
+        if record is not None and record.get("state") in {"Open", "PartiallyFilled"}
+    ]
+
+
 def maybe_accept_intent(config: BotConfig, intent_id: str, now: int) -> Decision:
     eligible = stellar_view(
         config,

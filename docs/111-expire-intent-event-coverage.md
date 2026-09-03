@@ -2,7 +2,7 @@
 
 **Issue:** [#111](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/111)
 **Branch:** `feat/ops-monitoring-and-health-check`
-**Status:** Confirmed — gap documented, no contract change required
+**Status:** Confirmed — gap documented, no contract change required; dead writes cleaned up
 
 ---
 
@@ -38,8 +38,10 @@ time passing:
   Because Soroban discards all state writes from a panicking invocation,
   the `state` field is *not* actually updated to `Expired` here, and no
   event is emitted — the transaction simply fails. (The preceding
-  `.set()`/`bump_intent_ttl` calls just before the `panic_with_error!` are
-  dead writes for the same reason; they never commit.)
+  `.set()`/`bump_intent_ttl` calls just before the `panic_with_error!` were
+  dead writes for the same reason; they have since been removed and replaced
+  with an explanatory comment — see the cleanup in `lib.rs`'s
+  `accept_intent` expiry branch.)
 - `expire_intent` is the **only** function that durably writes
   `state: Expired` and emits `intent_expired` — and only when someone
   calls it (it's permissionless, but still requires a submitted
@@ -141,3 +143,20 @@ consumers are aware of the distinction in §4. Recommendations:
 ---
 
 *Closes #111*
+
+---
+
+## 6. Code Cleanup (dead write removal)
+
+The `.set()`/`bump_intent_ttl` calls immediately before `panic_with_error!`
+in `accept_intent`'s expiry branch — identified as dead writes in §2 above —
+have been removed.  They were replaced with an inline comment explaining that
+Soroban discards all storage mutations from a panicking invocation, so no write
+is possible at that call site.
+
+A regression test (`accept_expired_intent_state_unchanged` in `test.rs`)
+was added to make the expected observable behavior explicit: after a failed
+`accept_intent` call on a past-deadline intent, `get_intent` must still return
+`state: Open` (not `Expired`) and `solver: None`, confirming no partial write
+committed.  The test also guards against the dead-write pattern being
+reintroduced accidentally in the future.

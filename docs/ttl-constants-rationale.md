@@ -152,3 +152,119 @@ Lowering `PERSISTENT_TTL_THRESHOLD` increases the frequency of TTL-extension
 writes (each write bumps TTL, so more writes happen when the threshold is lower
 relative to the extend-to target). The values chosen aim for a sensible middle
 ground on Stellar mainnet pricing as of the contract's initial deployment.
+
+---
+
+## Previously Unmanaged Persistent Keys (fixed in issue #271)
+
+The four keys below were written via `env.storage().persistent()` but never
+had their TTL bumped — a gap that would have caused silent correctness failures
+as entries gradually aged toward Soroban's state-archival threshold.  The same
+`PERSISTENT_TTL_THRESHOLD` / `PERSISTENT_TTL_EXTEND_TO` constants apply to all
+four, for the same reasons documented above.
+
+### `DataKey::CancelCooldown(Address)`
+
+**Written by:** `cancel_intent`  
+**Read by:** `cancel_intent` (spam guard at the top of the function)  
+**Failure mode without TTL management:** Once archived, the entry reads as
+absent. `cancel_intent` treats absence as "user has never cancelled", silently
+resetting the `CANCEL_COOLDOWN` delay and allowing the user to cancel at full
+rate again after any sufficiently long period of inactivity. The spam-deterrence
+mechanism is defeated without any error surfacing to the protocol.
+
+**Fix:** `bump_cancel_cooldown_ttl` is called immediately after every
+`CancelCooldown` write in `cancel_intent`.
+
+**Why the same constants?** The cooldown window (`CANCEL_COOLDOWN = 60 s`) is
+far shorter than the archival window, so the archival risk is not about the
+cooldown expiring — it is about the *record of the cooldown* expiring.  The
+14-day threshold is comfortably above any realistic gap between a user's
+`cancel_intent` calls during normal protocol activity.
+
+---
+
+### `DataKey::MinBondMultiplier(Address)`
+
+**Written by:** `set_min_bond_multiplier` (admin-only)  
+**Read by:** `get_adjusted_min_bond` (called from `accept_intent`)  
+**Failure mode without TTL management:** Once archived, the entry reads as
+absent. `get_adjusted_min_bond` treats absence as the 1.0× default, silently
+reverting the token's bond requirement to the minimum floor even if the admin
+had deliberately set a higher multiplier for a higher-risk token. Solvers can
+then accept intents against that token with an under-sized bond, reducing the
+protocol's collateral guarantee precisely where the admin intended to increase
+it.
+
+**Fix:** `bump_min_bond_multiplier_ttl` is called immediately after every
+`MinBondMultiplier` write in `set_min_bond_multiplier`.
+
+**Why the same constants?** Multipliers are admin-configured and not
+continuously refreshed by routine protocol activity.  Without a TTL bump they
+would archive after approximately the minimum Soroban persistent-TTL (~17 days
+at the time of writing).  The 30-day extend-to target comfortably exceeds this
+floor, giving admins a full month of headroom between re-configuring the same
+token.
+
+---
+
+### `DataKey::ExtensionGranted(BytesN<32>)`
+
+**Written by:** `request_extension`  
+**Read by:** `request_extension` (via `has`, one-shot guard)  
+**Failure mode without TTL management:** Once archived, `has` returns `false`.
+A solver whose extension flag archived can call `request_extension` again on the
+same intent and receive a second fill-window extension, bypassing the one-per-
+intent constraint.  This could be exploited to repeatedly extend a fill window
+without the corresponding bond risk the protocol intends.
+
+**Fix:** `bump_extension_granted_ttl` is called immediately after every
+`ExtensionGranted` write in `request_extension`.
+
+**Why the same constants?** The flag only needs to survive as long as the intent
+it protects.  Intents themselves are bumped with the same constants by
+`bump_intent_ttl`, so aligning `ExtensionGranted` to the same window ensures the
+flag and the intent archive together (if at all).
+
+---
+
+### `DataKey::UserIntents(Address)`
+
+**Written by:** `submit_intent`  
+**Read by:** `list_intents_by_user` (public view)  
+**Failure mode without TTL management:** Once archived, `list_intents_by_user`
+returns `unwrap_or_else(|| Vec::new(&env))` — an empty list — silently truncating
+the user's intent history at the point the entry archived. Front-ends and
+indexers calling this view would present incomplete history without any error,
+making the gap invisible to end users.
+
+**Fix:** `bump_user_intents_ttl` is called immediately after every `UserIntents`
+write in `submit_intent`.
+
+**Why the same constants?** The list can grow without bound as a user submits
+more intents over time; it should survive at least as long as any individual
+`IntentRecord` it references.  Using the same 14-day threshold / 30-day extend-to
+ensures both the list and its constituent records remain accessible for the same
+window, so a `list_intents_by_user` call that returns an ID will always be
+followed by a successful `get_intent` call on that ID.
+
+---
+
+## Cost Analysis for the Four New Keys
+
+All four keys use the same `extend_ttl` call pattern as `bump_intent_ttl` and
+`bump_solver_ttl`.  The per-call cost is one Soroban ledger read + conditional
+write (Soroban only writes if the remaining TTL is below the threshold).  On a
+hot path (`submit_intent`, `accept_intent`, `cancel_intent`) this adds at most
+one conditional persistent-storage write — comparable to what the existing
+`bump_intent_ttl` / `bump_solver_ttl` calls already incur, and negligible
+relative to the `IntentRecord` / `SolverRecord` reads.
+
+`MinBondMultiplier` is written only by the admin and is read once per
+`accept_intent`; the bump cost is confined to the infrequent admin call.
+`CancelCooldown` and `UserIntents` are written on user-initiated paths
+(`cancel_intent`, `submit_intent`) that already pay for `IntentRecord` I/O.
+`ExtensionGranted` is written once per intent for the rare extension path.
+
+None of the four keys are expected to materially affect the wasm-size or
+resource-fee budget beyond the already-established TTL-management overhead.
