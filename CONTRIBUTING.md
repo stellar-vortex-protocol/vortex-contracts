@@ -197,6 +197,23 @@ run `cargo audit` before pushing.
 When upgrading a dependency to resolve an advisory, note the advisory ID in
 the CHANGELOG entry.
 
+### Automated Dependency Updates with Dependabot
+
+Dependabot is configured to automatically open PRs for dependency updates in both
+`intent_settlement/` and `proof_registry/`, plus GitHub Actions versions in
+`.github/workflows/`. See [`.github/dependabot.yml`](.github/dependabot.yml).
+
+**Dependabot PR Review Policy:** Every dependency-update PR from Dependabot must pass
+the same CI gates as any manually-submitted PR — `fmt`, `clippy`, `test`, `build`,
+and `audit`. There is no special fast-track or auto-merge for Dependabot PRs; each
+one is reviewed with full scrutiny.
+
+**Edge Case — `#![no_std]` Compatibility:** When reviewing a Dependabot PR that
+bumps a dependency, re-verify that the new version does not transitively pull in
+`std` (which would violate the contract's `#![no_std]` requirement). If a Dependabot
+PR introduces a transitive `std` dependency, reject and close it; request a different
+version or file an issue with the upstream maintainer.
+
 ---
 
 ## Code Conventions
