@@ -160,6 +160,27 @@ When adding a new entrypoint or changing existing behavior, add or update a test
 that exercises the new code path. PRs that change logic without a corresponding
 test change will be asked to add coverage.
 
+### Property-based testing (proptest)
+
+Long-running property-based tests use [`proptest`](https://crates.io/crates/proptest) to explore random sequences
+of operations and verify invariants:
+
+- `proptest_bond.rs` — Bond conservation and lifecycle invariants
+- `proptest_fill.rs` — Fill conservation and ordering invariants
+
+These tests run with a low case count (256) in PR CI to keep iteration time under
+control. A nightly scheduled job (`.github/workflows/nightly-fuzz.yml`) runs them
+with a higher case count (10000) to catch regressions that only appear after many
+interleavings.
+
+If a proptest run fails, the failure is shrunk to a minimal reproduction sequence
+and saved to `.proptest-regressions/`. To confirm the fix, run the test locally
+or replay the same PROPTEST_RNG seed:
+
+```bash
+PROPTEST_RNG=<seed> cargo test --features testutils -- <test_name>
+```
+
 ---
 
 ## Linting and Formatting
