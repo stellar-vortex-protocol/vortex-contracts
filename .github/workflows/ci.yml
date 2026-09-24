@@ -271,3 +271,37 @@ jobs:
         run: cargo install cargo-mutants --locked
       - name: Run mutation tests
         run: cargo mutants --copy-target=false
+
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). cargo-llvm-cov generates coverage
+    # in a runner-local temp directory and uploads via codecov-action (HTTPS,
+    # not GitHub API). Inherits workflow-level minimum.
+    defaults:
+      run:
+        working-directory: intent_settlement
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: intent_settlement
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: Generate coverage
+        # Run coverage against the host-target test build (the same one
+        # `cargo test` uses), not the wasm32 artifact. The testutils feature
+        # enables test utilities for this coverage run.
+        run: cargo llvm-cov --features testutils --lcov --output-path coverage.lcov
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./intent_settlement/coverage.lcov
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

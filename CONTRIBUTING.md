@@ -347,6 +347,7 @@ configuration correct as the workflow grows.
 | `Contract (stable)` | `ci.yml` / `contract` matrix leg | ✅ Yes |
 | `Contract (1.78)` | `ci.yml` / `contract` matrix leg | ✅ Yes |
 | `Dependency audit` | `ci.yml` / `audit` | ✅ Yes |
+| `Code coverage` | `ci.yml` / `coverage` | ❌ No (advisory) |
 
 > **Note:** Matrix jobs are reported to GitHub as `<job.name> (<matrix value>)`.
 > The exact strings you must enter in the branch-protection UI are
@@ -411,7 +412,6 @@ once they are merged:
 | Job name | Workflow | Notes |
 |---|---|---|
 | `WASM size gate` | `ci.yml` (planned) | Blocks merges that grow the wasm by > N KB |
-| `Coverage` | `coverage.yml` (planned) | Advisory until a baseline is established |
 
 ### GITHUB_TOKEN permission model
 
@@ -436,6 +436,7 @@ needs.
 | `proptest` | Checkout + `cargo test` | `contents: read` |
 | `audit` | Checkout + `cargo audit` (queries RustSec DB over HTTPS, not the GitHub API) | `contents: read` |
 | `mutants` | Checkout + `cargo mutants` (mutates source in a runner-local temp copy) | `contents: read` |
+| `coverage` | Checkout + `cargo llvm-cov` + upload to Codecov via HTTPS (not GitHub API) | `contents: read` |
 
 **Adding a job that needs elevated scope:**
 
