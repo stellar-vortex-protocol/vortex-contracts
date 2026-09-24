@@ -22,6 +22,11 @@ first deploys to mainnet.
   every PR. Exercises the real deployment, contract initialization, and CLI-invocation
   path — catching issues that in-process unit tests miss. Includes a local test
   script (`scripts/e2e-test.sh`) for debugging; documented in `CONTRIBUTING.md`.
+- **`.github/CODEOWNERS` file establishing review routing (issue #296).** Maps
+  major repository areas (`intent_settlement/`, `proof_registry/`, `solver_registry/`,
+  `indexer/`, `docs/`, `.github/workflows/`, etc.) to code owners/teams. PRs
+  automatically request review from owners with relevant expertise. Documented
+  process for contributors to become owners in `CONTRIBUTING.md`.
 
 ### Changed
 

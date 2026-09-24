@@ -252,6 +252,31 @@ preconditions, and authorization requirements. Internal helpers (prefixed with
 
 ---
 
+## Code Ownership and Review Routing
+
+This repository uses a [`.github/CODEOWNERS`](./.github/CODEOWNERS) file to
+establish ownership of major areas and automatically route PRs to reviewers
+with relevant expertise. All paths in the repository are mapped to one or more
+owners/teams (see the file for the full mapping).
+
+### Becoming a Code Owner
+
+If you have demonstrated sustained contribution to a specific area of the
+repository (multiple non-trivial PRs, demonstrated domain expertise), you can
+become a listed owner for that area:
+
+1. Check the current owners in [`.github/CODEOWNERS`](./.github/CODEOWNERS)
+2. Open an issue or propose a PR adding yourself as an owner
+3. Gain approval from the existing owners of that area (they can speak to your
+   expertise and contribution history)
+4. Update [`.github/CODEOWNERS`](./.github/CODEOWNERS) and merge with the
+   approving maintainers' sign-off
+
+Ownership is not a permanent role — it reflects sustained involvement in an
+area. If you move on to other projects or take an extended break, consider
+requesting removal so the review queue doesn't back up waiting for unavailable
+reviewers.
+
 ## Submitting a PR
 
 1. Fork the repo and create a branch from `main`:

@@ -1,0 +1,88 @@
+# Vortex Contracts — Code Ownership and Review Routing
+#
+# This file establishes ownership of major repository areas and automatically
+# routes PR review requests to contributors with relevant expertise.
+#
+# Process for becoming a CODEOWNER:
+# 1. Demonstrate sustained contribution to an area (multiple non-trivial PRs)
+# 2. Open an issue or propose a PR adding yourself as an owner
+# 3. Gain approval from existing owners of that area
+# 4. Update this file and merge with the approving PR
+#
+# GitHub's CODEOWNERS matching is last-match-wins: a file matching multiple
+# patterns will be owned by the LAST pattern in this file that matches it.
+# To verify a path's owner, run:
+#   git ls-files <path> | xargs -I {} git check-attr owners {}
+#
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# ───────────────────────────────────────────────────────────────────────────
+
+# Default fallback owner for any path not explicitly matched below
+*  @stellar-vortex-protocol/maintainers
+
+# ───────────────────────────────────────────────────────────────────────────
+# Core Contract Logic
+# ───────────────────────────────────────────────────────────────────────────
+
+# Intent settlement contract — the main on-chain logic
+intent_settlement/src/               @stellar-vortex-protocol/intent-settlement-reviewers
+
+# Proof registry contract — cross-chain proof handling
+proof_registry/src/                  @stellar-vortex-protocol/proof-registry-reviewers
+
+# Solver registry contract — solver identity and configuration
+solver_registry/src/                 @stellar-vortex-protocol/solver-registry-reviewers
+
+# ───────────────────────────────────────────────────────────────────────────
+# Integration, Indexing, and Tooling
+# ───────────────────────────────────────────────────────────────────────────
+
+# Indexer and off-chain tooling
+indexer/                             @stellar-vortex-protocol/indexer-reviewers
+
+# Example code and solver integration guides
+examples/                            @stellar-vortex-protocol/examples-reviewers
+
+# ───────────────────────────────────────────────────────────────────────────
+# Documentation
+# ───────────────────────────────────────────────────────────────────────────
+
+# Runbooks, design documents, integration guides
+docs/                                @stellar-vortex-protocol/docs-reviewers
+
+# Main README
+README.md                            @stellar-vortex-protocol/maintainers
+
+# Governance and contribution documentation
+GOVERNANCE.md                        @stellar-vortex-protocol/maintainers
+CONTRIBUTING.md                      @stellar-vortex-protocol/maintainers
+
+# Changelog
+CHANGELOG.md                         @stellar-vortex-protocol/maintainers
+
+# ───────────────────────────────────────────────────────────────────────────
+# CI/CD, Build, and Configuration
+# ───────────────────────────────────────────────────────────────────────────
+
+# GitHub workflows and CI configuration
+.github/workflows/                   @stellar-vortex-protocol/ci-maintainers
+
+# GitHub templates and configuration
+.github/                             @stellar-vortex-protocol/ci-maintainers
+
+# Build and deployment scripts
+*.sh                                 @stellar-vortex-protocol/ci-maintainers
+Makefile                             @stellar-vortex-protocol/ci-maintainers
+justfile                             @stellar-vortex-protocol/ci-maintainers
+
+# Dependency management
+Cargo.lock                           @stellar-vortex-protocol/maintainers
+Cargo.toml                           @stellar-vortex-protocol/maintainers
+
+# ───────────────────────────────────────────────────────────────────────────
+# Tests
+# ───────────────────────────────────────────────────────────────────────────
+
+# Test suites
+tests/                               @stellar-vortex-protocol/test-reviewers
