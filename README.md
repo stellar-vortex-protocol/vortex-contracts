@@ -135,6 +135,31 @@ stellar contract invoke --id <CONTRACT_ID> --source <ANY_SECRET_KEY> --network t
   get_stats
 ```
 
+##### CLI Helper Script
+
+To reduce boilerplate when invoking the contract during local testing, use the
+CLI helper script at `scripts/invoke.sh`. It wraps the Stellar CLI invocations
+above and reads common parameters from environment variables or a config file:
+
+```bash
+# Copy the example config and fill in your values
+cp scripts/.env.local.example .env.local
+# Edit .env.local with your CONTRACT_ID, SECRET_KEY, and NETWORK
+
+# Now invoke commands via the helper (no need to repeat contract ID or key)
+./scripts/invoke.sh register_solver --solver <SOLVER_ADDRESS> --bond_amount 500000000
+./scripts/invoke.sh submit_intent --user <USER_ADDRESS> --src_chain ethereum \
+  --src_token '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' \
+  --src_amount 1000000000000000000 --dst_token <USDC_SAC_ADDRESS> \
+  --min_dst_amount 35000000000
+./scripts/invoke.sh accept_intent --solver <SOLVER_ADDRESS> --intent_id <INTENT_ID>
+./scripts/invoke.sh fill_intent --solver <SOLVER_ADDRESS> --intent_id <INTENT_ID> \
+  --fill_amount 35000000000
+./scripts/invoke.sh get_stats
+```
+
+See `./scripts/invoke.sh --help` for the full list of supported commands.
+
 #### Decimal Normalization for `src_amount`
 
 `src_amount` must be expressed in the **source token's smallest indivisible
