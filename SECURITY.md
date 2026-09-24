@@ -120,6 +120,10 @@ source-chain allowlist, and admin rotation. A compromised admin key can halt
 the protocol and redirect all fee and slash proceeds. The recommendations below
 apply before and after mainnet launch.
 
+**Custody transparency:** See [`docs/custody-transparency.md`](./docs/custody-transparency.md)
+for the current custody model (who holds the keys, single-key vs. multisig threshold, and last-verified date).
+This document is updated operationally whenever keys are rotated.
+
 #### Recommended custody model
 
 | Deployment stage | Recommended setup |

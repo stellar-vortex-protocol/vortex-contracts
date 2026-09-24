@@ -509,6 +509,9 @@ To report a vulnerability, see the org
 For the detailed threat model specific to `intent_settlement`, see
 [SECURITY.md](./SECURITY.md) in this repository.
 
+**Admin and fee-recipient custody:** See [`docs/custody-transparency.md`](./docs/custody-transparency.md)
+for the current custody model and key holders (updated operationally whenever keys rotate).
+
 ---
 
 ## Intent ID Derivation
