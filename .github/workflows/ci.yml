@@ -108,7 +108,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test
+        run: cargo test --locked
 
   wasm-size:
     name: Wasm size budget (${{ matrix.crate }})
@@ -136,7 +136,7 @@ jobs:
             | sudo tar -xz -C /usr/local --strip-components=1
           wasm-opt --version
       - name: Build wasm
-        run: cargo build --target wasm32-unknown-unknown --release
+        run: cargo build --target wasm32-unknown-unknown --release --locked
       - name: Optimize wasm
         shell: bash
         run: |
@@ -200,9 +200,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
-        run: cargo test
+        run: cargo test --locked
       - name: Build wasm
-        run: cargo build --target wasm32-unknown-unknown --release
+        run: cargo build --target wasm32-unknown-unknown --release --locked
 
   proptest:
     name: Bond-conservation proptest
@@ -224,7 +224,7 @@ jobs:
       - name: Bond conservation proptest
         # PROPTEST_CASES controls how many random sequences are generated per
         # test; 256 balances coverage against CI runtime.
-        run: PROPTEST_CASES=256 cargo test --features testutils -- bond_conservation
+        run: PROPTEST_CASES=256 cargo test --features testutils --locked -- bond_conservation
 
   audit:
     name: Dependency audit (${{ matrix.crate }})
