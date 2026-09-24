@@ -482,7 +482,25 @@ matrix leg that runs on toolchain `1.78` alongside `stable`.
 - [ ] All required CI checks pass
 - [ ] PR description includes `Closes #<issue-number>`
 - [ ] New public items have doc-comments
-- [ ] `CHANGELOG.md` updated under `[Unreleased]`
+- [ ] `CHANGELOG.md` updated under `[Unreleased]` (or PR labeled `no-changelog-needed`)
+
+### CHANGELOG enforcement
+
+A CI job automatically verifies that every PR changing `intent_settlement/src/` or
+`proof_registry/src/` includes a corresponding update to `CHANGELOG.md`. This is
+a load-bearing requirement: the runbook and integration guides depend on the
+changelog being accurate for operators and solvers.
+
+**Escape hatch:** For genuinely changelog-exempt changes (pure test-only, 
+comment-only, CI/tooling with no behavioral impact), add the `no-changelog-needed`
+label to your PR. The CI job will skip enforcement and you won't need to add a
+trivial changelog entry just to satisfy automation.
+
+The CI check runs automatically on every PR and fails with a clear message if 
+a source change lacks a changelog entry. Fix it by updating `CHANGELOG.md` (find
+the `[Unreleased]` section and add a bullet-point entry under the appropriate
+subsection — `Added`, `Changed`, `Fixed`, etc.), or add the label if the change
+genuinely doesn't warrant a changelog entry.
 
 ## License
 

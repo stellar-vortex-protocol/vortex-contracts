@@ -9,6 +9,14 @@ first deploys to mainnet.
 
 ## [Unreleased]
 
+### Added
+
+- **CI: Enforce CHANGELOG.md updates (issue #294).** A new CI job verifies that
+  every PR changing `intent_settlement/src/` or `proof_registry/src/` includes a
+  corresponding update to `CHANGELOG.md`. An escape hatch (`no-changelog-needed`
+  label) exists for genuinely changelog-exempt changes (pure test-only, 
+  comment-only, CI/tooling).
+
 ### Changed
 
 - **Storage layout — `SolverRecord` / `IntentRecord` (issue #187, #188).**

@@ -43,6 +43,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changelog:
+    name: Changelog enforcement
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check CHANGELOG.md updated for source changes
+        shell: bash
+        run: |
+          # Skip check if PR has the 'no-changelog-needed' label
+          LABELS=$(gh pr view ${{ github.event.pull_request.number }} --json labels --jq '.labels[].name' || true)
+          if echo "$LABELS" | grep -q "no-changelog-needed"; then
+            echo "✓ PR labeled 'no-changelog-needed' — changelog check skipped"
+            exit 0
+          fi
+
+          # Get list of changed files in this PR
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
+
+          # Check if any source files changed (intent_settlement/src/ or proof_registry/src/)
+          SOURCE_FILES_CHANGED=$(echo "$CHANGED_FILES" | grep -E '(intent_settlement/src/|proof_registry/src/)' || true)
+
+          if [ -z "$SOURCE_FILES_CHANGED" ]; then
+            echo "✓ No source files changed — changelog not required"
+            exit 0
+          fi
+
+          # Check if CHANGELOG.md was updated
+          CHANGELOG_CHANGED=$(echo "$CHANGED_FILES" | grep -E '^CHANGELOG\.md$' || true)
+
+          if [ -z "$CHANGELOG_CHANGED" ]; then
+            echo "❌ CHANGELOG enforcement failed"
+            echo ""
+            echo "Source files changed but CHANGELOG.md was not updated:"
+            echo "$SOURCE_FILES_CHANGED"
+            echo ""
+            echo "CONTRIBUTING.md requires: 'CHANGELOG.md updated under [Unreleased]'"
+            echo ""
+            echo "Options:"
+            echo "  1. Update CHANGELOG.md with your changes (preferred)"
+            echo "  2. Add 'no-changelog-needed' label if this PR is:"
+            echo "     - Pure test-only changes"
+            echo "     - Comment-only / documentation-only changes"
+            echo "     - CI/tooling changes with no impact on contract behavior"
+            exit 1
+          fi
+
+          echo "✓ CHANGELOG.md was updated"
+          exit 0
+    env:
+      GH_TOKEN: ${{ github.token }}
+
   fmt:
     name: Formatting (${{ matrix.crate }})
     runs-on: ubuntu-latest
