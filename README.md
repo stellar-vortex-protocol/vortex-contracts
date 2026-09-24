@@ -548,11 +548,9 @@ def compute_intent_id(user_address: str, src_chain: str, src_amount: int, timest
 
 ## Roadmap
 
-- [x] **Contract test suite** — `soroban_sdk` testutils coverage for the full intent
-      lifecycle, solver bonding/slashing, admin controls, pause, and storage TTL
-      management
-- [~] **Solver registry contract** — tier lookup + perk schedule shipped and wired into `accept_intent` / `slash_solver` (#197); score-gated promotion, staking, reputation NFT, dispute resolution still to do (#186)
-- [ ] **Cross-chain proof verification** — verify source-chain tx on-chain via Stellar oracle / messaging infra
+For a comprehensive, thematic view of the protocol's forward-looking work—cross-chain proof verification, solver reputation infrastructure, community governance, observability, and more—see the public [**ROADMAP.md**](./ROADMAP.md).
+
+That document consolidates scattered follow-up notes and roadmap items from design docs and `SECURITY.md` into a single, community-visible view organized by theme and status (in progress, not started, under research, shipped, out of scope for v1).
 
 ---
 
