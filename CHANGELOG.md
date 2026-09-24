@@ -27,6 +27,13 @@ first deploys to mainnet.
   `indexer/`, `docs/`, `.github/workflows/`, etc.) to code owners/teams. PRs
   automatically request review from owners with relevant expertise. Documented
   process for contributors to become owners in `CONTRIBUTING.md`.
+- **Formalized off-chain governance process (issue #297).** New `GOVERNANCE.md`
+  documents the RFC and discussion process preceding on-chain proposals. Establishes
+  minimum 3-business-day discussion window before `propose_*` calls; describes what
+  requires a proposal (fee changes, admin transfers, upgrades, token allowlist changes),
+  emergency exception for `pause()`, and rollback planning. Includes GitHub issue
+  template for proposals (`.github/ISSUE_TEMPLATE/governance-proposal.md`). Referenced
+  from `CONTRIBUTING.md` and `README.md`.
 
 ### Changed
 

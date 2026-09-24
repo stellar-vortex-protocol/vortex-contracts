@@ -277,6 +277,20 @@ area. If you move on to other projects or take an extended break, consider
 requesting removal so the review queue doesn't back up waiting for unavailable
 reviewers.
 
+## Governance and Protocol Changes
+
+Any change to protocol parameters, admin actions, or contract upgrades requires an
+off-chain governance process *before* the on-chain proposal. See [`GOVERNANCE.md`](./GOVERNANCE.md)
+for the full process, including:
+
+- Required discussion window (minimum 3 business days).
+- When emergency pause is appropriate vs. when governance is required.
+- How to structure a proposal and engage stakeholders.
+
+This applies to any `propose_*` or `set_config` call. Regular PRs that change code
+(without affecting live deployments) do not require this process — just the standard
+code review above.
+
 ## Submitting a PR
 
 1. Fork the repo and create a branch from `main`:
