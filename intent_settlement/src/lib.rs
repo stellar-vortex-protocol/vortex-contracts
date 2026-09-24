@@ -780,6 +780,11 @@ impl IntentSettlement {
         // admin. require_auth_for_args is not needed because there are no
         // separate per-argument capabilities to scope — the signer IS the admin.
         admin.require_auth();
+        // Probe the SEP-41 interface: if `bond_token` isn't a real token contract
+        // this will trap and revert the transaction before we store anything.
+        let token_client = token::Client::new(&env, &bond_token);
+        // decimals() is a pure view with no side-effects; we discard the value.
+        let _decimals = token_client.decimals();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
