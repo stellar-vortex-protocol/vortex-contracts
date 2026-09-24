@@ -561,3 +561,41 @@ The script queries six key contract state values (all read-only, no fees):
 6. **Stats** — a 3-tuple: `(total_intents, total_volume, open_intents)`
 
 Requires: `stellar` CLI in $PATH and a configured Stellar identity or `STELLAR_SECRET_KEY` environment variable.
+
+---
+
+## Ongoing Monitoring
+
+After deployment, continuously monitor the contract for incidents using the dedicated ops monitoring tool.
+
+### Vortex Monitoring & Alerting Service
+
+The repository includes a real-time monitoring & alerting service at [`monitoring/vortex-monitor.js`](../monitoring/README.md)
+that watches for P1/P2/P3 signals defined in [`docs/110-monitoring-alerting-spec.md`](110-monitoring-alerting-spec.md).
+
+**Setup:**
+
+```bash
+cd monitoring
+
+# Configure environment
+export SOROBAN_RPC_URL="https://soroban-mainnet.stellar.org"
+export CONTRACT_ID="C..."
+export NETWORK="mainnet"
+export ALERT_WEBHOOK_URL="https://your-alerting-service.example.com/webhooks/alerts"
+
+# Run the monitor
+node vortex-monitor.js
+```
+
+**Signals monitored:**
+
+- **P1** (page immediately): Unexpected pause/unpause, admin transfer, fee recipient change, token rescue
+- **P2** (escalate): Unusual slash rate, bond utilization drop, mass solver exit, paused longer than expected
+- **P3** (informational): Fill-rate stagnation, extension-granting frequency, config churn
+
+See [`monitoring/README.md`](../monitoring/README.md) for full documentation, configuration options, and alert formats.
+
+---
+
+*Document status: Updated to reference ops tooling implementation (Issue #289)*
