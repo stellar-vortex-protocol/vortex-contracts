@@ -253,6 +253,10 @@ deregistration path at all.
 
 ---
 
+### Bug Bounty Program
+
+Vortex Protocol offers a security bug bounty program for findings in the `intent_settlement` and `proof_registry` contracts. See [`docs/bug-bounty-program.md`](./docs/bug-bounty-program.md) for severity tiers, reward structure, and submission process.
+
 ### Reporting a Vulnerability
 
 Please do **not** open a public GitHub issue for security vulnerabilities.
