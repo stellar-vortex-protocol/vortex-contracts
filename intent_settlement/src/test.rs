@@ -893,22 +893,49 @@ fn withdraw_bond_zero_amount_fails() {
 }
 
 #[test]
-fn withdraw_bond_allowed_with_active_intent_if_still_above_minimum() {
-    // Partial withdrawal doesn't require active_intents == 0 -- only full
-    // deregistration does -- as long as the remaining bond still clears
-    // MIN_BOND, the solver stays adequately collateralized.
+fn withdraw_bond_fails_with_active_intent() {
+    // Issue #270: A solver with active intents cannot withdraw their bond,
+    // since the bond was sized to cover those obligations at accept-time.
+    // This prevents gaming the bond floor and ensures adequate collateralization
+    // for in-flight intents.
     let ctx = setup();
     let c = ctx.client();
     ctx.register_solver();
     let id = ctx.submit();
     c.accept_intent(&ctx.solver, &id);
 
+    // Attempting to withdraw while the intent is Accepted should fail.
+    let withdraw_amount = 100 * 10_000_000;
+    let res = c.try_withdraw_bond(&ctx.solver, &withdraw_amount);
+    assert_eq!(res.err().unwrap().unwrap(), Error::SolverHasActiveIntents);
+
+    // Verify that the solver's bond was not modified.
+    assert_eq!(c.get_solver(&ctx.solver).unwrap().bond_amount, BOND);
+}
+
+#[test]
+fn withdraw_bond_allowed_after_active_intent_resolved() {
+    // Once a solver's active intents reach zero (filled, slashed, or expired),
+    // they can withdraw again.
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.register_solver();
+    let id = ctx.submit();
+    c.accept_intent(&ctx.solver, &id);
+
+    // Slash the intent by waiting for the fill window to expire.
+    ctx.pass_time(FILL_WINDOW + 1);
+    c.slash_solver(&id);
+
+    // Verify active_intents is now zero.
+    let record = c.get_solver(&ctx.solver).unwrap();
+    assert_eq!(record.active_intents, 0);
+
+    // Now withdrawal should succeed.
     let withdraw_amount = 100 * 10_000_000;
     c.withdraw_bond(&ctx.solver, &withdraw_amount);
-    assert_eq!(
-        c.get_solver(&ctx.solver).unwrap().bond_amount,
-        BOND - withdraw_amount
-    );
+    let record_after = c.get_solver(&ctx.solver).unwrap();
+    assert_eq!(record_after.bond_amount, BOND - withdraw_amount);
 }
 
 #[test]

@@ -1780,6 +1780,23 @@ impl IntentSettlement {
             .get(&DataKey::Solver(solver.clone()))
             .unwrap_or_else(|| panic_with_error!(&env, Error::SolverNotRegistered));
 
+        // Issue #270: Check that the solver has no active intents before allowing
+        // withdrawal. A solver with accepted intents cannot withdraw their bond,
+        // since the bond was sized to cover those obligations at accept-time.
+        //
+        // This is a conservative, fail-safe bound. Ideally (Issue #60), we'd track
+        // the minimum bond required per accepted intent and compute the precise
+        // floor across all of the solver's current obligations. For now, we match
+        // `deregister_solver`'s stricter all-or-nothing precedent: zero active
+        // intents required, no exceptions.
+        //
+        // Trade-off: a solver who accepts an intent but immediately regrets it
+        // must wait for that intent to be slashed or expire before they can
+        // withdraw. This is correct behaviour — it prevents gaming the bond floor.
+        if record.active_intents > 0 {
+            panic_with_error!(&env, Error::SolverHasActiveIntents);
+        }
+
         let current = Self::get_solver_bond_amount(&env, &record, &bond_token);
         if amount > current {
             panic_with_error!(&env, Error::InsufficientBond);

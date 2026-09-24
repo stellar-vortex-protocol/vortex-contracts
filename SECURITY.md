@@ -251,6 +251,36 @@ after a network disruption.  Preserving the fields instead closes both the
 cooldown-bypass and the reputation-reset exploits without restricting the
 deregistration path at all.
 
+#### Closed gap: bond withdrawal with active intents (#270)
+
+**Previously:** `withdraw_bond` checked only that the post-withdrawal balance
+stayed at or above `cfg.min_bond`, without checking whether the solver had
+`active_intents > 0`.  A solver holding one or more `Accepted` intents could
+withdraw their bond all the way down to the flat `min_bond` floor, leaving
+those already-accepted intents backed by collateral far below the
+`get_adjusted_min_bond` value that was required to accept them in the first
+place.  This directly undermined the bond's purpose as collateral for in-flight
+obligations.
+
+**Example:** A 500 USDC bond can normally accept multiple intents, each
+individually validated at accept-time against `get_adjusted_min_bond` (e.g.,
+150 USDC per intent). The solver could immediately call `withdraw_bond` to
+pull out everything down to `min_bond` (as low as 50 USDC), leaving those
+already-accepted intents backed by 50 USDC total — 67 % under-collateralized
+relative to what was required to accept them.
+
+**Fix (conservative bound):** `withdraw_bond` now checks `if record.active_intents > 0`
+before allowing any withdrawal, mirroring `deregister_solver`'s stricter
+all-or-nothing precedent: a solver with any active intents cannot withdraw at
+all.  This is a fail-safe, conservative bound; a more precise per-intent
+collateral-reservation model (informed by issue #60's enumerable-intents view)
+remains a future enhancement but is not necessary for correctness.
+
+**Trade-off:** A solver who accepts an intent but immediately regrets it must
+wait for that intent to be slashed or expire before withdrawing further bond.
+This is correct behaviour — it prevents gaming the bond floor and ensures
+accepted intents never lack the collateral that was promised at accept-time.
+
 ---
 
 ### Reporting a Vulnerability
