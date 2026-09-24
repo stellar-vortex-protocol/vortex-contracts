@@ -325,3 +325,42 @@ jobs:
         run: cargo install cargo-mutants --locked
       - name: Run mutation tests
         run: cargo mutants --copy-target=false
+
+  integration-test:
+    name: Soroban standalone integration test
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). The test runs a local Docker
+    # container and makes requests to it via HTTP — no GitHub API calls.
+    # Inherits workflow-level minimum.
+    services:
+      docker:
+        image: docker:dind
+        options: >-
+          --privileged
+          --health-cmd "docker ps"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust and Stellar CLI
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: intent_settlement
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+      - name: Install required tools
+        run: |
+          apt-get update
+          apt-get install -y docker.io curl jq
+      - name: Build contract
+        run: |
+          cd intent_settlement
+          stellar contract build
+      - name: Run end-to-end integration test
+        run: bash scripts/e2e-test.sh
+        timeout-minutes: 10

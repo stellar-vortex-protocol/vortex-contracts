@@ -323,6 +323,31 @@ make deploy-testnet   # stellar contract deploy … --network testnet
 See [`Makefile`](./Makefile) and [`justfile`](./justfile) for the full list of
 targets, or run `make help` / `just --list`.
 
+### Integration tests
+
+Beyond the in-process unit tests, a new CI job (`integration-test`) runs an
+end-to-end lifecycle test against a local Soroban standalone network on every PR.
+This exercises the real deployment, `initialize`, and CLI-invocation path that
+operators and solvers use in production — catching issues that unit tests might
+miss (e.g., contract-build plumbing, CLI argument encoding).
+
+To run the same test locally for debugging:
+
+```bash
+bash scripts/e2e-test.sh
+```
+
+The script will:
+1. Start a local Soroban standalone network (via Docker)
+2. Build and deploy the contract
+3. Initialize it with test accounts
+4. Register a test solver
+5. Submit, accept, and fill a test intent
+6. Verify state transitions at each step
+
+Adjust the `USDC_CONTRACT_ID` in the script if you need to test with different
+tokens or network configurations.
+
 ### Pre-push checklist
 
 Before opening a PR, run `make all` (or its `just` equivalent) and confirm:

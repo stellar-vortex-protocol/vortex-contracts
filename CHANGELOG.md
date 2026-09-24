@@ -16,6 +16,12 @@ first deploys to mainnet.
   corresponding update to `CHANGELOG.md`. An escape hatch (`no-changelog-needed`
   label) exists for genuinely changelog-exempt changes (pure test-only, 
   comment-only, CI/tooling).
+- **CI: Soroban standalone network integration test (issue #295).** A new CI job
+  runs a full end-to-end lifecycle test (`register_solver` → `submit_intent` →
+  `accept_intent` → `fill_intent`) against a local Soroban standalone network on
+  every PR. Exercises the real deployment, contract initialization, and CLI-invocation
+  path — catching issues that in-process unit tests miss. Includes a local test
+  script (`scripts/e2e-test.sh`) for debugging; documented in `CONTRIBUTING.md`.
 
 ### Changed
 
