@@ -4044,9 +4044,12 @@ impl IntentSettlement {
             .get::<_, SolverRecord>(&DataKey::Solver(solver))
         {
             Some(record) => {
+                let now = env.ledger().timestamp();
+                let cooldown_remaining = Self::slash_cooldown_remaining(record.last_slash_time, now);
                 record.is_active
                     && record.bond_amount >= cfg.min_bond
                     && record.active_intents < cfg.max_active_intents_per_solver
+                    && cooldown_remaining == 0
             }
             None => false,
         }
