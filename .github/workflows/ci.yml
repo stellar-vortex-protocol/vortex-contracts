@@ -33,6 +33,7 @@ on:
 #   wasm-size     — checkout, build, STEP_SUMMARY    → contents: read  ✓
 #   proptest      — checkout, cargo test             → contents: read  ✓
 #   audit         — checkout, cargo audit            → contents: read  ✓
+#   secrets-scan  — checkout only                    → contents: read  ✓
 #   mutants       — checkout, cargo mutants          → contents: read  ✓
 permissions:
   contents: read
@@ -247,6 +248,24 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Audit dependencies
         run: cargo audit
+
+  secrets-scan:
+    name: Secrets scanning
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). Inherits workflow-level minimum.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history required for gitleaks to detect secrets in commits
+          fetch-depth: 0
+      - name: Scan for secrets with gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          config-path: .gitleaks.toml
+          # --redact: do not print the actual secret value in CI logs
+          args: --redact
+          # Fail the job if secrets are detected
+          fail: true
 
   mutants:
     name: Mutation testing
