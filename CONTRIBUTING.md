@@ -369,6 +369,7 @@ configuration correct as the workflow grows.
 | `Contract (1.78)` | `ci.yml` / `contract` matrix leg | ✅ Yes |
 | `Dependency audit` | `ci.yml` / `audit` | ✅ Yes |
 | `Code coverage` | `ci.yml` / `coverage` | ❌ No (advisory) |
+| `Resource cost drift detection` | `ci.yml` / `resource-cost-drift` | ❌ No (advisory) |
 
 > **Note:** Matrix jobs are reported to GitHub as `<job.name> (<matrix value>)`.
 > The exact strings you must enter in the branch-protection UI are
@@ -458,6 +459,7 @@ needs.
 | `audit` | Checkout + `cargo audit` (queries RustSec DB over HTTPS, not the GitHub API) | `contents: read` |
 | `mutants` | Checkout + `cargo mutants` (mutates source in a runner-local temp copy) | `contents: read` |
 | `coverage` | Checkout + `cargo llvm-cov` + upload to Codecov via HTTPS (not GitHub API) | `contents: read` |
+| `resource-cost-drift` | Checkout + run `scripts/check-resource-cost-drift.sh` (runs benchmarks and diffs markdown) | `contents: read` |
 
 **Adding a job that needs elevated scope:**
 

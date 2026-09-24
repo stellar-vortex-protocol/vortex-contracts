@@ -305,3 +305,37 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  resource-cost-drift:
+    name: Resource cost drift detection
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). Regenerates benchmark measurements
+    # and diffs against the committed doc. Inherits workflow-level minimum.
+    # This job is advisory (non-blocking) until we establish baselines and set
+    # it as required-check when drift detection matures.
+    defaults:
+      run:
+        working-directory: intent_settlement
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: intent_settlement
+      - name: Check resource cost drift
+        # Runs the drift detection script which:
+        # 1. Parses the baseline from docs/149-resource-cost-per-entrypoint.md
+        # 2. Regenerates measurements using cargo test bench::resource_cost_report
+        # 3. Compares and flags any entrypoint drifting > ±10%
+        run: |
+          echo "### Resource Cost Drift Detection" >> "$GITHUB_STEP_SUMMARY"
+          if bash ../scripts/check-resource-cost-drift.sh >> "$GITHUB_STEP_SUMMARY" 2>&1; then
+            echo "✅ All resource costs within tolerance" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ Resource cost drift detected (advisory check)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
