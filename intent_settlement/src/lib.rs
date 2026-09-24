@@ -2240,6 +2240,10 @@ impl IntentSettlement {
             panic_with_error!(&env, Error::ZeroAmount);
         }
 
+        if fill_amount > MAX_AMOUNT {
+            panic_with_error!(&env, Error::AmountTooLarge);
+        }
+
         // ── Proof gate (issue #190) ─────────────────────────────────────────
         // Runs before any token transfer or storage write. Every failure path
         // leaves the intent untouched in `Accepted` (docs/129 §3).
