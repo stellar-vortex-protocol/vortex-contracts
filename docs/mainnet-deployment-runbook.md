@@ -541,6 +541,10 @@ stellar contract invoke \
   --new_fee_recipient <NEW_FEE_RECIPIENT_ADDRESS>
 ```
 
+### Postmortem for P1 Incidents
+
+If the contract is paused or any admin action occurs unexpectedly, publish a postmortem per [`docs/incident-postmortem-template.md`](./incident-postmortem-template.md) (issue #301) within 5 business days of resolution. The postmortem should include timeline (correlated against the specific signals in `docs/110-monitoring-alerting-spec.md`), root cause, impact, and preventive follow-ups.
+
 ### Quick status check script
 
 Save this as `scripts/check-deployment.sh` and run it any time you need a

@@ -261,6 +261,12 @@ deregistration path at all.
 
 Vortex Protocol offers a security bug bounty program for findings in the `intent_settlement` and `proof_registry` contracts. See [`docs/bug-bounty-program.md`](./docs/bug-bounty-program.md) for severity tiers, reward structure, and submission process.
 
+### Incident Response and Postmortem Process
+
+When a P1 incident occurs on mainnet (unexpected pause, admin key transfer, fee recipient change, or `rescue_tokens` invocation), the protocol publishes a postmortem within 5 business days of resolution per [`docs/incident-postmortem-template.md`](./docs/incident-postmortem-template.md) (issue #301). Postmortems include timeline, root cause, impact assessment, and preventive actions tracked as follow-up issues.
+
+**Exception:** If the root cause involves a not-yet-fully-patched vulnerability, an initial postmortem may be published with technical details redacted, followed by a full postmortem within a defined safe-harbor period (typically 30 days).
+
 ### Reporting a Vulnerability
 
 Please do **not** open a public GitHub issue for security vulnerabilities.
