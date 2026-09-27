@@ -7,9 +7,12 @@
 //! boundary transitions (score exactly on a threshold), tier demotion on
 //! slash, the zero-fills edge case, and threshold tuning bounds.
 
-use crate::{Error, SolverRecord, SolverRegistry, SolverRegistryClient, USDC};
+use crate::{
+    Error, SolverRecord, SolverRegistry, SolverRegistryClient, ADMIN_TIMELOCK_DELAY, USDC,
+};
 use soroban_sdk::{
-    testutils::Address as _, token, Address, Env,
+    testutils::{Address as _, Ledger},
+    token, Address, Env,
 };
 
 const FLOOR: i128 = 50 * USDC; // tier-0 (Unranked) bond floor
@@ -304,6 +307,134 @@ fn writer_can_drive_write_path_and_strangers_cannot() {
             .try_record_fill(&stranger, &ctx.solver, &0),
         Err(Ok(Error::Unauthorized.into()))
     );
+}
+
+// ─── Timelocked two-step admin transfer (#393) ─────────────────────────────
+
+fn advance(ctx: &Ctx, secs: u64) {
+    let now = ctx.env.ledger().timestamp();
+    ctx.env.ledger().set_timestamp(now + secs);
+}
+
+#[test]
+fn admin_transfer_waits_for_the_timelock_and_the_new_admin() {
+    let ctx = setup();
+    let c = ctx.client();
+    let new_admin = Address::generate(&ctx.env);
+
+    let proposed_at = ctx.env.ledger().timestamp();
+    c.propose_admin(&new_admin);
+    let eta = proposed_at + ADMIN_TIMELOCK_DELAY;
+    assert_eq!(c.get_pending_admin(), Some((new_admin.clone(), eta)));
+
+    // One second early: rejected, and the old admin is still in charge.
+    advance(&ctx, ADMIN_TIMELOCK_DELAY - 1);
+    assert_eq!(
+        c.try_accept_admin(&new_admin),
+        Err(Ok(Error::AdminTimelockNotElapsed.into()))
+    );
+    assert_eq!(c.get_admin(), Some(ctx.admin.clone()));
+
+    // Exactly at the eta: the new admin signs and takes over.
+    advance(&ctx, 1);
+    c.accept_admin(&new_admin);
+    let auths = ctx.env.auths();
+    assert_eq!(auths.len(), 1);
+    assert_eq!(auths[0].0, new_admin);
+    assert_eq!(c.get_admin(), Some(new_admin.clone()));
+    assert_eq!(c.get_pending_admin(), None);
+
+    // Admin-only calls now authenticate against the new admin.
+    c.set_writer(&Address::generate(&ctx.env));
+    assert_eq!(ctx.env.auths()[0].0, new_admin);
+}
+
+#[test]
+fn accept_admin_must_come_from_the_proposed_address() {
+    let ctx = setup();
+    let c = ctx.client();
+    c.propose_admin(&Address::generate(&ctx.env));
+    advance(&ctx, ADMIN_TIMELOCK_DELAY);
+    assert_eq!(
+        c.try_accept_admin(&Address::generate(&ctx.env)),
+        Err(Ok(Error::Unauthorized.into()))
+    );
+    assert_eq!(c.get_admin(), Some(ctx.admin.clone()));
+}
+
+#[test]
+fn accept_admin_requires_the_new_admins_signature() {
+    let ctx = setup();
+    let c = ctx.client();
+    let new_admin = Address::generate(&ctx.env);
+    c.propose_admin(&new_admin);
+    advance(&ctx, ADMIN_TIMELOCK_DELAY);
+
+    // Drop the blanket auth mock: nobody has signed.
+    ctx.env.set_auths(&[]);
+    assert!(c.try_accept_admin(&new_admin).is_err());
+    assert_eq!(c.get_admin(), Some(ctx.admin.clone()));
+}
+
+#[test]
+fn a_new_admin_proposal_replaces_the_old_one_and_resets_the_timelock() {
+    let ctx = setup();
+    let c = ctx.client();
+    let first = Address::generate(&ctx.env);
+    let second = Address::generate(&ctx.env);
+
+    c.propose_admin(&first);
+    advance(&ctx, ADMIN_TIMELOCK_DELAY - 10);
+    c.propose_admin(&second);
+    advance(&ctx, 10);
+
+    assert_eq!(
+        c.try_accept_admin(&first),
+        Err(Ok(Error::Unauthorized.into()))
+    );
+    assert_eq!(
+        c.try_accept_admin(&second),
+        Err(Ok(Error::AdminTimelockNotElapsed.into()))
+    );
+    advance(&ctx, ADMIN_TIMELOCK_DELAY);
+    c.accept_admin(&second);
+    assert_eq!(c.get_admin(), Some(second));
+}
+
+#[test]
+fn cancel_admin_transfer_discards_the_pending_handover() {
+    let ctx = setup();
+    let c = ctx.client();
+    assert_eq!(
+        c.try_cancel_admin_transfer(),
+        Err(Ok(Error::NoPendingAdminTransfer.into()))
+    );
+
+    let proposed = Address::generate(&ctx.env);
+    c.propose_admin(&proposed);
+    c.cancel_admin_transfer();
+    assert_eq!(c.get_pending_admin(), None);
+
+    advance(&ctx, ADMIN_TIMELOCK_DELAY);
+    assert_eq!(
+        c.try_accept_admin(&proposed),
+        Err(Ok(Error::NoPendingAdminTransfer.into()))
+    );
+    assert_eq!(c.get_admin(), Some(ctx.admin.clone()));
+}
+
+#[test]
+fn propose_and_cancel_require_the_current_admin() {
+    let ctx = setup();
+    let c = ctx.client();
+    let proposed = Address::generate(&ctx.env);
+    c.propose_admin(&proposed);
+    assert_eq!(ctx.env.auths()[0].0, ctx.admin);
+
+    ctx.env.set_auths(&[]);
+    assert!(c.try_propose_admin(&Address::generate(&ctx.env)).is_err());
+    assert!(c.try_cancel_admin_transfer().is_err());
+    assert_eq!(c.get_pending_admin().map(|(a, _)| a), Some(proposed));
 }
 
 // ─── Tier demotion on slash ────────────────────────────────────────────────

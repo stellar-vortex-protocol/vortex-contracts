@@ -47,6 +47,10 @@ and currently returns 0 for every tier.
 |---|---|---|
 | `initialize(admin, bond_token, fee_recipient)` | `admin` | Once. Seeds the default tier table. |
 | `set_writer(writer)` | admin | Address allowed to drive the write path (§2.3). |
+| `propose_admin(new_admin)` | admin | Starts an admin handover; `accept_admin` allowed after `ADMIN_TIMELOCK_DELAY` (48 h). A new proposal replaces the pending one and resets the timer. Emits `admin_transfer_proposed(new_admin, eta)`. |
+| `accept_admin(new_admin)` | `new_admin` | Completes the handover once the timelock has elapsed; must be the proposed address. Emits `admin_transferred(old, new)`. |
+| `cancel_admin_transfer()` | admin | Discards the pending handover. Emits `admin_transfer_cancelled`. |
+| `get_pending_admin()` | — | `Option<(Address, u64)>`: proposed admin and its eta. |
 | `set_tier_threshold(tier, min_bond, min_score_bps)` | admin | `tier ∈ 1..=4`; see 2.4. |
 
 ### 2.2 Solver self-service
@@ -157,6 +161,8 @@ yield the same outputs in `intent_settlement`:
 | 10 | `ThresholdOutOfBounds` | threshold value outside its bound |
 | 11 | `ThresholdsNotMonotonic` | thresholds not strictly increasing |
 | 12 | `WriterNotSet` | write path used before `set_writer` by a non-admin caller |
+| 16 | `AdminTimelockNotElapsed` | `accept_admin` before the handover eta |
+| 17 | `NoPendingAdminTransfer` | `accept_admin` / `cancel_admin_transfer` with no handover pending |
 
 ---
 
