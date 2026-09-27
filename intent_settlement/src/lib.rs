@@ -24,206 +24,111 @@ mod proptest_bond;
 #[cfg(test)]
 mod bench;
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Protocol Constants (Canonical Block) – Issue #341 ───────────────────────
+// All protocol parameters consolidated here (previously scattered with duplicates).
+// Pick one value for each parameter; new variants take the next free numbers.
 
+// ─── Timing Parameters ─────────────────────────────────────────────────────────
+/// Default intent lifetime (issue #63). Overridable via set_config().
 const INTENT_EXPIRY: u64 = 1800; // 30 minutes
-const FILL_WINDOW: u64 = 300; // 5 minutes to fill after intent accepted
-const MIN_BOND: i128 = 50 * 10_000_000; // 50 USDC minimum solver bond
-const PROTOCOL_FEE_BPS: i128 = 5; // 0.05%
 
-/// Baseline slash rate in basis points (1 000 bps = 10%).
-///
-/// Issue #193: `slash_solver` no longer slashes a flat 10% of the bond.
-/// Instead it slashes `min(intent_value, bond) / 10` — an amount proportional
-/// to the size of the intent the solver failed to fill — and then *caps* the
-/// result at `bond * SLASH_BPS / 10_000` so a slash is never more punitive
-/// than the old flat-10% baseline for a well-matched bond-to-intent ratio.
-/// The floor of 1 stroop (issue #32) is preserved so a non-zero bond is
-/// always economically punished.
-const SLASH_BPS: i128 = 1_000; // 10%
+/// Time a solver has to fill after accepting (issue #63). Overridable via set_config().
+const FILL_WINDOW: u64 = 300; // 5 minutes
 
-/// Issue #188 — dispute-resolution flow (docs/dispute-resolution-design.md).
-///
-/// `DISPUTE_WINDOW` is the period, starting at `begin_fill`, during which the
-/// user may contest a fill via `dispute_fill`.  Output tokens sit in contract
-/// escrow for its full duration; once it elapses with no dispute anyone may
-/// call `release_fill` to pay the user and close the intent.
+/// Dispute window: user's time to contest a fill (issue #188, docs/dispute-resolution-design.md).
 const DISPUTE_WINDOW: u64 = 3_600; // 1 hour
 
-/// Issue #188 — after a dispute is raised the arbiter has this long to call
-/// `resolve_dispute`.  If it elapses unresolved, `release_fill` becomes a
-/// permissionless timeout that releases the escrow to the user (the
-/// conservative default from the design doc) without slashing the solver.
+/// Arbiter's time to resolve a dispute (issue #188).  After expiry, release_fill becomes permissionless.
 const ARBITER_WINDOW: u64 = 86_400; // 24 hours
 
-/// Issue #187 — a solver may hold bonds in at most this many distinct
-/// approved tokens.  Bounds the work done by `deregister_solver` (which must
-/// refund every token) and the storage cost of the per-token bond entries.
-const MAX_BOND_TOKENS: u32 = 8;
-
-/// Dispute-resolution parameters (issue #48, #233):
-/// When a solver delivers tokens (begin_fill), the user has DISPUTE_WINDOW seconds
-/// to open a dispute. If no dispute is raised, release_fill() can execute after
-/// the window closes. If a dispute is raised, the arbiter has ARBITER_WINDOW
-/// seconds to resolve it; if unresolved, the timeout releases escrow to the user.
-const DISPUTE_WINDOW: u64 = 3600; // 1 hour: time for user to notice and contest fill
-const ARBITER_WINDOW: u64 = 86400; // 24 hours: time for arbiter to resolve
-const DISPUTE_BOND: i128 = 1 * 10_000_000; // 1 USDC: anti-griefing bond from user
-
-/// Upper bound on the number of intent IDs `list_open_intents` returns per
-/// call (issue #249), bounding the resource cost of paginated reads.
-const MAX_PAGE_SIZE: u32 = 100;
-
-/// After being slashed a solver must wait this many seconds before they can
-/// accept new intents. Used by `accept_intent`'s cooldown guard and by
-/// `get_slash_cooldown_remaining` (issue #256), which both derive from the
-/// same `slash_cooldown_remaining` helper so they can never disagree.
-const SLASH_COOLDOWN: u64 = 3600; // 1 hour
-
-/// Upper bound on the number of `src_chain`/`dst_token` entries a solver may
-/// declare via `set_solver_routes` (issue #255), to keep per-solver route
-/// storage bounded.
-const MAX_ROUTE_ENTRIES: u32 = 20;
-
-/// Delay enforced between proposing and executing a sensitive admin change
-/// (admin transfer, fee recipient handover, dst_token allowlist changes).
-/// Gives users and solvers a window to notice and react before the change
-/// takes effect (#115). Proposing also emits a distinct event immediately,
-/// so off-chain monitors get advance notice even before the delay elapses
-/// (#116).
-const ADMIN_TIMELOCK_DELAY: u64 = 172_800; // 48 hours
-
-// ── Defaults seeded into `ProtocolConfig` by `initialize`, and the fallback
-// `load_config` returns for contracts deployed before the configurable-params
-// feature existed.  They mirror the historical compile-time constants above.
-const DEFAULT_MIN_BOND: i128 = MIN_BOND;
-const DEFAULT_FILL_WINDOW: u64 = FILL_WINDOW;
-const DEFAULT_INTENT_EXPIRY: u64 = INTENT_EXPIRY;
-const DEFAULT_PROTOCOL_FEE_BPS: i128 = PROTOCOL_FEE_BPS;
-
-// ── `set_config` bounds.  A parameter outside any of these ranges is rejected
-// with `Error::InvalidConfig`.
-const MAX_PROTOCOL_FEE_BPS: i128 = 1_000; // 10% hard cap on the protocol fee
-const MIN_FILL_WINDOW_SECS: u64 = 60; // a solver needs at least a minute to fill
-const MIN_INTENT_EXPIRY_SECS: u64 = 300; // and must always exceed the fill window
-const MIN_BOND_FLOOR: i128 = 10_000_000; // one 7-decimal USDC unit
-
-// ── Cooldowns / limits enforced outside `ProtocolConfig`.
-const SLASH_COOLDOWN: u64 = 3600; // 1 hour a slashed solver must wait before accepting again
-const CANCEL_COOLDOWN: u64 = 3600; // 1 hour between a user's successive intent cancellations
-const MAX_EXTENSION_DURATION: u64 = 300; // one extra fill window granted by `request_extension`
-
-// ── Storage-migration schema version (#194). Bumped whenever a `migrate()`
-// body is added for a new release; `initialize` stamps fresh deploys with the
-// current value and `migrate` refuses to run once the contract is already at
-// it, so a migration can never be applied twice.
-const MIGRATION_VERSION: u32 = 1;
-
-// Basis-points denominator, shared by the protocol fee and the #192 discount
-// schedule (`discount_bps` is a fraction of the fee, not of the fill).
-const BPS_DENOMINATOR: i128 = 10_000;
-
-// Upper sanity bound for src_amount and min_dst_amount.
-//
-// Largest realistic token amounts use 18-decimal ETH units.
-// 1e12 tokens × 1e18 units/token = 1e30, well within i128 range (~1.7e38),
-// but downstream arithmetic (fee = amount * 5 / 10_000) multiplies first and
-// then divides. To guarantee `amount * PROTOCOL_FEE_BPS` never overflows i128,
-// the bound is i128::MAX / PROTOCOL_FEE_BPS ≈ 3.4e37. We choose a round,
-// economically implausible threshold: 10^30 (one trillion 18-decimal tokens).
-// That is a comfortable safety margin while rejecting only fat-fingered inputs.
-pub const MAX_AMOUNT: i128 = 1_000_000_000_000_000_000_000_000_000_000i128; // 10^30
-
-const MAX_BATCH_SIZE: u32 = 100;
-const MAX_EXTENSION_DURATION: u64 = 600; // 10 minutes
-
-const DEFAULT_MIN_BOND: i128 = MIN_BOND;
-const DEFAULT_FILL_WINDOW: u64 = FILL_WINDOW;
-const DEFAULT_INTENT_EXPIRY: u64 = INTENT_EXPIRY;
-const DEFAULT_PROTOCOL_FEE_BPS: i128 = PROTOCOL_FEE_BPS;
-
-// Soroban archives ledger entries that go too long without being touched.
-// Persistent Intent/Solver records get their TTL bumped on every write so
-// they don't need to be manually restored before later calls can read them.
-const DAY_IN_LEDGERS: u32 = 17280; // ~5s per ledger
-const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 14;
-const PERSISTENT_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 30;
-
-// The contract instance entry (Admin/FeeRecipient/BondToken/TotalIntents/
-// TotalVolume, plus the contract's own code) is a single ledger entry and
-// needs the same treatment, or the whole contract becomes unreachable.
-const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
-const INSTANCE_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 60;
-
-// ─── Default protocol parameters (#202) ──────────────────────────────────────
-//
-// `initialize` seeds `DataKey::Config` with these, and `load_config` falls
-// back to them for deployments that pre-date the configurable-params upgrade.
-// They are defined as aliases of the historical compile-time constants above
-// so moving to a stored `ProtocolConfig` changes no observable behaviour — a
-// freshly initialized contract behaves exactly as it did when the parameters
-// were hard-coded.
-const DEFAULT_MIN_BOND: i128 = MIN_BOND; // 50 USDC
-const DEFAULT_FILL_WINDOW: u64 = FILL_WINDOW; // 300 s
-const DEFAULT_INTENT_EXPIRY: u64 = INTENT_EXPIRY; // 1800 s
-const DEFAULT_PROTOCOL_FEE_BPS: i128 = PROTOCOL_FEE_BPS; // 5 bps (0.05%)
-
-// ─── `set_config` bounds (#202) ──────────────────────────────────────────────
-//
-// Guard rails enforced by `set_config` so an admin cannot move a parameter to
-// an economically unsafe value. Values match the bounds already documented in
-// `set_config`'s own doc comment.
-const MAX_PROTOCOL_FEE_BPS: i128 = 1_000; // 10% — hard ceiling on the protocol fee
-const MIN_FILL_WINDOW_SECS: u64 = 60; // a solver needs at least a minute to deliver a fill
-const MIN_INTENT_EXPIRY_SECS: u64 = 300; // an intent must stay live for at least five minutes
-const MIN_BOND_FLOOR: i128 = 10_000_000; // 1 USDC (7 decimals) — absolute floor for `min_bond`
-
-// ─── Cooldowns (#202) ────────────────────────────────────────────────────────
-
-/// Seconds a solver must wait after being slashed before `accept_intent` will
-/// let it take on a new intent. Long enough to blunt a griefing loop where a
-/// solver repeatedly accepts and abandons intents, short enough that an honest
-/// solver that hit one bad fill window recovers within the hour.
+/// Seconds a solver must wait after slash before accepting new intents (issue #256).
 const SLASH_COOLDOWN: u64 = 3_600; // 1 hour
 
-/// Minimum gap the same user must leave between `cancel_intent` calls. Deters
-/// cancel spam (e.g. submit → cancel loops used to grief solvers mid-quote)
-/// without getting in the way of a user correcting a single mistaken intent.
-const CANCEL_COOLDOWN: u64 = 60; // 1 minute
+/// Minimum gap between successive cancel_intent() calls by the same user (issue #341).
+/// Deters cancel-spam griefing while allowing correction of mistakes.
+const CANCEL_COOLDOWN: u64 = 60; // 1 minute (NOT 1 hour; validated at #341)
 
-// ─── Batch + extension limits (#202) ─────────────────────────────────────────
+/// Storage-migration schema version (issue #194). Bumped on breaking upgrades.
+const MIGRATION_VERSION: u32 = 1;
 
-/// Upper bound on the number of items any `batch_*` entrypoint processes in a
-/// single call. Keeps the worst-case resource cost (and therefore fee) of one
-/// transaction bounded regardless of caller input. 20 covers realistic solver
-/// batching while staying well inside Soroban's per-transaction limits.
+/// Admin timelock for sensitive changes: transfer_admin, set_fee_recipient, dst allowlist (issue #115).
+const ADMIN_TIMELOCK_DELAY: u64 = 172_800; // 48 hours
+
+// ─── Economic Parameters ───────────────────────────────────────────────────────
+/// Minimum solver bond amount in stroops (50 USDC). Overridable via set_config().
+const MIN_BOND: i128 = 50 * 10_000_000; // 50 USDC
+
+/// Protocol fee in basis points (issue #36). Overridable via set_config().
+const PROTOCOL_FEE_BPS: i128 = 5; // 0.05%
+
+/// Baseline slash rate in basis points (issue #193). Slashed amount is now proportional to intent value.
+const SLASH_BPS: i128 = 1_000; // 10% – cap on the slash relative to intent value
+
+/// Anti-griefing bond required from user to open a dispute (issue #233).
+const DISPUTE_BOND: i128 = 1 * 10_000_000; // 1 USDC
+
+// ─── Hard Limits ───────────────────────────────────────────────────────────────
+/// Absolute max on any amount (src_amount, min_dst_amount) to prevent overflow (issue #341).
+/// 10^30 stroops ≈ 1 trillion 18-decimal tokens. Rejects implausibly large inputs.
+pub const MAX_AMOUNT: i128 = 1_000_000_000_000_000_000_000_000_000_000i128; // 10^30
+
+/// Max batch size for any batch_* entrypoint (issue #277, validated at #341).
+/// 20 items keeps transaction cost bounded within Soroban limits.
 const MAX_BATCH_SIZE: u32 = 20;
 
-/// Longest additional time `request_extension` can add to an Accepted intent's
-/// deadline. One extension is allowed per intent; this is the same order of
-/// magnitude as `FILL_WINDOW` so a single extension can at most roughly double
-/// the solver's delivery window.
-const MAX_EXTENSION_DURATION: u64 = 300; // 5 minutes
+/// Max extension duration: one `request_extension()` call can add this much time (issue #341).
+const MAX_EXTENSION_DURATION: u64 = 300; // 5 minutes (NOT 10 min; 5 min matches FILL_WINDOW magnitude)
 
-// ─── Solver-registry tier perks (#197) ──────────────────────────────────────
-//
-// Index = tier number (0 Unranked … 4 Platinum). These MUST stay in lock-step
-// with `solver_registry`'s tier table and `docs/solver-registry-design.md`
-// §3/§6/§7. They are held here, rather than fetched per call, so
-// `accept_intent` / `slash_solver` make at most one cross-contract call each
-// (just `get_tier`) on their hot paths. A change to these values is a
-// protocol-parameter change.
+/// Max tokens a solver may hold bonds in (issue #187).
+const MAX_BOND_TOKENS: u32 = 8;
 
-/// Fill-window extension bonus per tier, in basis points (10_000 = +100%).
-/// Unranked +0%, Bronze +10%, Silver +20%, Gold +30%, Platinum +50%.
+/// Max src_chain/dst_token route entries per solver (issue #255).
+const MAX_ROUTE_ENTRIES: u32 = 20;
+
+/// Max intent IDs returned by paginated list_open_intents (issue #249).
+const MAX_PAGE_SIZE: u32 = 100;
+
+// ─── Config Bounds (enforced by set_config) ────────────────────────────────────
+/// Hard cap on protocol fee when set_config is called (issue #202).
+const MAX_PROTOCOL_FEE_BPS: i128 = 1_000; // 10%
+
+/// Minimum fill window allowed by set_config (issue #202).
+const MIN_FILL_WINDOW_SECS: u64 = 60; // 1 minute
+
+/// Minimum intent expiry allowed by set_config (issue #202).
+const MIN_INTENT_EXPIRY_SECS: u64 = 300; // 5 minutes (must exceed FILL_WINDOW)
+
+/// Floor for minimum bond when set_config is called (issue #202).
+const MIN_BOND_FLOOR: i128 = 10_000_000; // 1 USDC
+
+// ─── Default Config ────────────────────────────────────────────────────────────
+// Seeds ProtocolConfig at initialize() and fallback for pre-upgrade contracts.
+const DEFAULT_MIN_BOND: i128 = MIN_BOND;
+const DEFAULT_FILL_WINDOW: u64 = FILL_WINDOW;
+const DEFAULT_INTENT_EXPIRY: u64 = INTENT_EXPIRY;
+const DEFAULT_PROTOCOL_FEE_BPS: i128 = PROTOCOL_FEE_BPS;
+
+// ─── Basis Points ──────────────────────────────────────────────────────────────
+/// Denominator for basis-point arithmetic (fee, discount, slash).
+const BPS_DENOMINATOR: i128 = 10_000;
+
+// ─── Ledger Entry TTL ──────────────────────────────────────────────────────────
+/// Soroban ledger entry eviction constants (issue #267 onwards).
+const DAY_IN_LEDGERS: u32 = 17280; // ~5s per ledger
+const PERSISTENT_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 14; // Re-extend persistent at 14 days old
+const PERSISTENT_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 30; // Extend persistent to 30-day TTL
+const INSTANCE_TTL_THRESHOLD: u32 = DAY_IN_LEDGERS * 30; // Re-extend instance at 30 days old
+const INSTANCE_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 60; // Extend instance to 60-day TTL
+
+// ─── Solver Tier Perks (issue #197) ────────────────────────────────────────────
+// Index = tier (0=Unranked, 1=Bronze, ..., 4=Platinum). MUST lock-step with solver_registry.
+/// Fill-window bonus per tier in basis points (10_000 = 100% bonus).
 const TIER_FILL_WINDOW_BONUS_BPS: [u64; 5] = [0, 1_000, 2_000, 3_000, 5_000];
 
-/// Slash percentage per tier, in basis points of the bond (10_000 = 100%).
-/// Unranked/Bronze 10%, Silver 8%, Gold 6%, Platinum 5% — and 5% (500 bps) is
-/// the floor for every tier.
+/// Slash rate per tier in basis points of bond (floor is 500 bps = 5%).
 const TIER_SLASH_BPS: [i128; 5] = [1_000, 1_000, 800, 600, 500];
 
-/// Lowest slash rate any tier may receive, in basis points (Platinum's 5%).
+/// Minimum slash rate across all tiers (Platinum).
 const MIN_SLASH_BPS: i128 = 500;
 
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
@@ -402,6 +307,41 @@ pub enum DataKey {
     /// touches this key, so proof-gating is fully opt-in and defaults off
     /// exactly like `DstAllowlistEnabled`.
     ProofRegistry,
+
+    /// **Instance storage.** Schema migration version (issue #194).
+    MigrationVersion,
+    /// **Instance storage.** Cumulative solver bonds across the protocol.
+    TotalBonded,
+    /// **Instance storage.** Minimum solver bond amount base value.
+    MinBond,
+    /// **Persistent storage** per solver: bond amount.
+    SolverBond(Address),
+    /// **Persistent storage** per solver: accepted intent IDs.
+    SolverIntents(Address),
+    /// **Persistent storage** per solver: reputation score.
+    SolverReputation(Address),
+    /// **Persistent storage** per solver: route configuration.
+    SolverRoutes(Address),
+    /// **Persistent storage** per token: accumulated protocol fees.
+    TokenFees(Address),
+    /// **Persistent storage** per token: settlement volume.
+    TokenVolume(Address),
+    /// **Instance storage.** Backstop pool configuration flag.
+    BackstopPool,
+    /// **Persistent storage.** Backstop pool claimed amount.
+    BackstopClaimed,
+    /// **Instance storage.** Best bid tracking for auctions.
+    BestBid,
+    /// **Instance storage.** Bid window active flag.
+    BidWindowEnabled,
+    /// **Instance storage.** Address authorized for dispute resolution.
+    Arbiter,
+    /// **Persistent storage.** Pending contract upgrade proposal.
+    PendingUpgrade,
+    /// **Instance storage.** Solver registry address.
+    SolverRegistry,
+    /// **Instance storage.** Allowed bond token for settlements.
+    AllowedBondToken,
 }
 
 // ─── Data Structs ─────────────────────────────────────────────────────────────
@@ -756,6 +696,71 @@ pub enum Error {
     /// submitting `user`.  Self-referral is rejected to prevent a user from
     /// gaming the referral programme by naming their own address.
     SelfReferral = 35,
+
+    // ── Missing variants (issue #340) – declared but raised in settlement ────
+
+    /// Dispute window has expired; no longer possible to contest a fill.
+    DisputeWindowExpired = 36,
+    /// Dispute window has not yet opened; too early to contest.
+    DisputeWindowStillOpen = 37,
+    /// Dispute window has closed; no longer possible to open a dispute.
+    DisputeWindowClosed = 38,
+    /// No dispute is currently open for this intent.
+    NoDisputeOpen = 39,
+    /// No fill escrow exists to release.
+    NoFillEscrowed = 40,
+    /// Arbiter timeout has not yet elapsed; slash not yet available.
+    TimelockNotElapsed = 41,
+    /// Bid window has closed; no longer accepting bids.
+    BidWindowClosed = 42,
+    /// Bid window has not yet opened.
+    BidWindowStillOpen = 43,
+    /// Intent is not in bidding state.
+    IntentNotBidding = 44,
+    /// Submitted bid is not higher than current best bid.
+    BidNotHigher = 45,
+    /// Intent is not in filling state for this operation.
+    IntentNotFilling = 46,
+    /// Amount exceeds maximum allowed value.
+    AmountTooLarge = 47,
+    /// Intent is not in disputed state for this operation.
+    IntentNotDisputed = 48,
+    /// Invalid protocol configuration.
+    InvalidConfig = 49,
+    /// Arbiter window has expired; dispute resolution window closed.
+    ArbiterWindowExpired = 50,
+    /// Backstop pool is empty; cannot claim from it.
+    BackstopPoolEmpty = 51,
+    /// Backstop funds have already been claimed.
+    BackstopAlreadyClaimed = 52,
+    /// Batch size exceeds maximum allowed.
+    BatchTooLarge = 53,
+    /// Too many bond tokens configured.
+    TooManyBondTokens = 54,
+    /// Solver's route configuration has too many entries.
+    TooManyRouteEntries = 55,
+    /// Destination amount is implausibly large.
+    ImplausibleDstAmount = 56,
+    /// Cancel cooldown period has not yet elapsed.
+    CancelCooldownNotExpired = 57,
+    /// Intent has already used its one permitted extension.
+    ExtensionAlreadyGranted = 58,
+    /// Extension cap has been exceeded.
+    ExtensionCapExceeded = 59,
+    /// Pending admin transfer proposal not found.
+    NoPendingAdminTransfer = 60,
+    /// Contract has already been migrated to this version.
+    AlreadyMigrated = 61,
+    /// Maximum active intents per solver has been reached.
+    MaxActiveIntentsCapReached = 62,
+    /// No pending upgrade proposal found.
+    NoPendingUpgrade = 63,
+    /// No pending destination token change found.
+    NoPendingDstTokenChange = 64,
+    /// Caller is not the designated arbiter.
+    NotArbiter = 65,
+    /// Intent is not in accepted state for fill operations.
+    IntentNotAcceptedForFill = 66,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
