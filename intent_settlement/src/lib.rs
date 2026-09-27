@@ -402,6 +402,24 @@ pub enum DataKey {
     /// touches this key, so proof-gating is fully opt-in and defaults off
     /// exactly like `DstAllowlistEnabled`.
     ProofRegistry,
+
+    /// Issue #363: Solver operator (session) key grants: (solver, operator) → Operator struct
+    SolverOperator(Address, Address),
+
+    /// Issue #364: Delegated staking shares: (solver, delegator) → share balance
+    DelegatedStake(Address, Address),
+
+    /// Issue #364: Total delegated shares for a solver (for share accounting)
+    SolverDelegatedShares(Address),
+
+    /// Issue #365: Commit-reveal sealed bids: (intent_id, solver) → CommittedBid
+    CommittedBid(BytesN<32>, Address),
+
+    /// Issue #365: Bid reveal window configuration per intent
+    BidRevealWindow(BytesN<32>),
+
+    /// Issue #366: Configuration flag for batch mode (atomic vs best-effort)
+    BatchModeConfig,
 }
 
 // ─── Data Structs ─────────────────────────────────────────────────────────────
@@ -585,6 +603,53 @@ pub struct ReputationSnapshot {
     pub total_volume: i128,
 }
 
+/// Issue #363: Solver operator key with scoped permissions
+#[contracttype]
+#[derive(Clone)]
+pub struct Operator {
+    pub address: Address,
+    /// Bitmask of allowed operations: bit 0=accept, 1=fill, 2=bid, 3=request_extension
+    pub scopes: u32,
+    /// Maximum notional amount per intent for this operator
+    pub max_per_intent: i128,
+    /// Expiry timestamp for this operator grant
+    pub expires_at: u64,
+}
+
+/// Issue #364: Delegated stake tracking per solver
+#[contracttype]
+#[derive(Clone)]
+pub struct SolverDelegation {
+    pub solver: Address,
+    pub total_delegated: i128,
+    pub total_shares: i128,
+    /// Commission rate in basis points
+    pub commission_bps: u32,
+    /// Timelock for commission increases
+    pub commission_locked_until: u64,
+}
+
+/// Issue #365: Committed bid for sealed-bid auction
+#[contracttype]
+#[derive(Clone)]
+pub struct CommittedBid {
+    pub solver: Address,
+    /// SHA256(solver || intent_id || amount || salt)
+    pub commitment_hash: BytesN<32>,
+    pub committed_at: u64,
+    /// Small bond to penalize uncommitted/unrevealed bids
+    pub bid_bond: i128,
+}
+
+/// Issue #365: Revealed bid with proof
+#[contracttype]
+#[derive(Clone)]
+pub struct RevealedBid {
+    pub amount: i128,
+    /// Random salt used in commitment
+    pub salt: BytesN<32>,
+}
+
 // ─── Errors ───────────────────────────────────────────────────────────────────
 
 #[contracterror]
@@ -756,6 +821,28 @@ pub enum Error {
     /// submitting `user`.  Self-referral is rejected to prevent a user from
     /// gaming the referral programme by naming their own address.
     SelfReferral = 35,
+
+    /// Issue #363: Operator key has expired or has insufficient permissions/balance
+    OperatorNotAuthorized = 36,
+    /// Issue #363: Attempted operation exceeds operator's per-intent limit
+    OperatorLimitExceeded = 37,
+
+    /// Issue #364: Delegated stake amount is too small or invalid
+    InvalidDelegateAmount = 38,
+    /// Issue #364: Delegator has insufficient delegated shares to undelegate
+    InsufficientDelegatedShares = 39,
+    /// Issue #364: Unbonding delay has not elapsed for undelegation
+    UnbondingInProgress = 40,
+
+    /// Issue #365: Bid commitment is invalid or has expired
+    InvalidBidCommitment = 41,
+    /// Issue #365: Bid reveal does not match committed hash
+    BidRevealMismatch = 42,
+    /// Issue #365: Reveal window has closed
+    RevealWindowClosed = 43,
+
+    /// Issue #366: Best-effort batch operation with per-item results
+    BatchProcessingError = 44,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
