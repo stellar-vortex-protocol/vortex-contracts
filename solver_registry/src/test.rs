@@ -9,7 +9,7 @@
 
 use crate::{Error, SolverRecord, SolverRegistry, SolverRegistryClient, USDC};
 use soroban_sdk::{
-    testutils::Address as _, token, Address, Env,
+    testutils::Address as _, token, Address, BytesN, Env,
 };
 
 const FLOOR: i128 = 50 * USDC; // tier-0 (Unranked) bond floor
@@ -303,6 +303,150 @@ fn writer_can_drive_write_path_and_strangers_cannot() {
         ctx.client()
             .try_record_fill(&stranger, &ctx.solver, &0),
         Err(Ok(Error::Unauthorized.into()))
+    );
+}
+
+// ─── Obligation locks (#392) ───────────────────────────────────────────────
+
+fn intent(env: &Env, seed: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[seed; 32])
+}
+
+/// Registers the default solver and configures a writer.
+fn with_writer(ctx: &Ctx) -> Address {
+    ctx.register(FLOOR);
+    let writer = Address::generate(&ctx.env);
+    ctx.client().set_writer(&writer);
+    writer
+}
+
+#[test]
+fn lock_and_release_track_open_obligations() {
+    let ctx = setup();
+    let writer = with_writer(&ctx);
+    let c = ctx.client();
+    let (a, b) = (intent(&ctx.env, 1), intent(&ctx.env, 2));
+
+    assert_eq!(c.get_open_obligations(&ctx.solver), 0);
+    assert_eq!(c.lock_obligation(&writer, &ctx.solver, &a), 1);
+    assert_eq!(c.lock_obligation(&writer, &ctx.solver, &b), 2);
+    assert!(c.has_obligation(&ctx.solver, &a));
+    assert_eq!(c.get_open_obligations(&ctx.solver), 2);
+
+    assert_eq!(c.release_obligation(&writer, &ctx.solver, &a), 1);
+    assert!(!c.has_obligation(&ctx.solver, &a));
+    assert!(c.has_obligation(&ctx.solver, &b));
+    assert_eq!(c.release_obligation(&writer, &ctx.solver, &b), 0);
+    assert_eq!(c.get_open_obligations(&ctx.solver), 0);
+}
+
+#[test]
+fn lock_obligation_is_idempotent_per_intent() {
+    let ctx = setup();
+    let writer = with_writer(&ctx);
+    let c = ctx.client();
+    let a = intent(&ctx.env, 1);
+
+    assert_eq!(c.lock_obligation(&writer, &ctx.solver, &a), 1);
+    // A retried accept for the same intent must not double-count.
+    assert_eq!(c.lock_obligation(&writer, &ctx.solver, &a), 1);
+    assert_eq!(c.get_open_obligations(&ctx.solver), 1);
+}
+
+#[test]
+fn release_obligation_is_idempotent_per_intent() {
+    let ctx = setup();
+    let writer = with_writer(&ctx);
+    let c = ctx.client();
+    let (a, b) = (intent(&ctx.env, 1), intent(&ctx.env, 2));
+    c.lock_obligation(&writer, &ctx.solver, &a);
+    c.lock_obligation(&writer, &ctx.solver, &b);
+
+    assert_eq!(c.release_obligation(&writer, &ctx.solver, &a), 1);
+    // Releasing the same intent again (e.g. fill then re-open) is a no-op,
+    // and must not release the solver's other obligation.
+    assert_eq!(c.release_obligation(&writer, &ctx.solver, &a), 1);
+    // Releasing an intent that was never locked is a no-op too.
+    assert_eq!(
+        c.release_obligation(&writer, &ctx.solver, &intent(&ctx.env, 9)),
+        1
+    );
+    assert!(c.has_obligation(&ctx.solver, &b));
+}
+
+#[test]
+fn obligations_are_scoped_per_solver() {
+    let ctx = setup();
+    let writer = with_writer(&ctx);
+    let c = ctx.client();
+    let other = Address::generate(&ctx.env);
+    ctx.mint(&other, FLOOR);
+    c.register_solver(&other, &FLOOR);
+    let a = intent(&ctx.env, 1);
+
+    c.lock_obligation(&writer, &ctx.solver, &a);
+    assert_eq!(c.get_open_obligations(&other), 0);
+    assert!(!c.has_obligation(&other, &a));
+    // Releasing under the wrong solver leaves the real lock in place.
+    assert_eq!(c.release_obligation(&writer, &other, &a), 0);
+    assert_eq!(c.get_open_obligations(&ctx.solver), 1);
+}
+
+#[test]
+fn obligation_path_accepts_only_the_writer() {
+    let ctx = setup();
+    ctx.register(FLOOR);
+    let c = ctx.client();
+    let a = intent(&ctx.env, 1);
+    let writer = Address::generate(&ctx.env);
+    let stranger = Address::generate(&ctx.env);
+
+    // No writer configured: even the admin is rejected.
+    assert_eq!(
+        c.try_lock_obligation(&ctx.admin, &ctx.solver, &a),
+        Err(Ok(Error::WriterNotSet.into()))
+    );
+    assert_eq!(
+        c.try_release_obligation(&ctx.admin, &ctx.solver, &a),
+        Err(Ok(Error::WriterNotSet.into()))
+    );
+
+    c.set_writer(&writer);
+    for caller in [&ctx.admin, &stranger] {
+        assert_eq!(
+            c.try_lock_obligation(caller, &ctx.solver, &a),
+            Err(Ok(Error::Unauthorized.into()))
+        );
+        assert_eq!(
+            c.try_release_obligation(caller, &ctx.solver, &a),
+            Err(Ok(Error::Unauthorized.into()))
+        );
+    }
+    assert_eq!(c.get_open_obligations(&ctx.solver), 0);
+}
+
+#[test]
+fn obligation_path_requires_writer_auth() {
+    let ctx = setup();
+    let writer = with_writer(&ctx);
+    let c = ctx.client();
+    // Drop the blanket auth mock: the writer has not signed.
+    ctx.env.set_auths(&[]);
+    assert!(c
+        .try_lock_obligation(&writer, &ctx.solver, &intent(&ctx.env, 1))
+        .is_err());
+    assert_eq!(c.get_open_obligations(&ctx.solver), 0);
+}
+
+#[test]
+fn lock_obligation_rejects_unregistered_solver() {
+    let ctx = setup();
+    let writer = with_writer(&ctx);
+    let unknown = Address::generate(&ctx.env);
+    assert_eq!(
+        ctx.client()
+            .try_lock_obligation(&writer, &unknown, &intent(&ctx.env, 1)),
+        Err(Ok(Error::SolverNotRegistered.into()))
     );
 }
 
