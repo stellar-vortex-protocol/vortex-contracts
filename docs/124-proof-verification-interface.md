@@ -352,11 +352,11 @@ confirmed.
 | Question | Deferred to |
 |----------|-------------|
 | Who runs the VAA relay bot (solver, Vortex, or permissionless)? | Implementation |
-| Chain ID namespace mapping (EVM chain ID → Wormhole chain ID) | Implementation |
+| Chain ID namespace mapping (EVM chain ID → Wormhole chain ID) | Resolved — issue #253, `IntentSettlement::src_chain_to_wormhole_id` |
 | Grace period if proof arrives after fill window but fill was honest | v2 dispute resolution |
 | `ProofRegistry` upgrade authority (same Admin or separate?) | Implementation |
 | Handling non-EVM source chains (Solana, Cosmos) | Future spike |
-| Proof expiry (how long is a proof valid after receipt?) | Implementation |
+| Proof expiry (how long is a proof valid after receipt?) | Resolved — issue #254, `PROOF_VALIDITY_WINDOW` |
 
 ---
 

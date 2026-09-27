@@ -1,0 +1,37 @@
+# EditorConfig: https://editorconfig.org
+# Matches current whitespace/line-ending conventions across the repo.
+# Rust files defer to rustfmt for formatting; this config covers everything else.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Markdown — preserve trailing double-spaces (line breaks), but trim elsewhere
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+
+# YAML (GitHub Actions workflows, etc.)
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# TOML (Cargo.toml, Cargo.lock, rust-toolchain.toml)
+[*.toml]
+indent_style = space
+indent_size = 2
+
+# Shell scripts
+[*.sh]
+indent_style = space
+indent_size = 2
+
+# Rust source — rustfmt owns the real formatting; just set baseline here
+[*.rs]
+indent_style = space
+indent_size = 4
+max_line_length = 100

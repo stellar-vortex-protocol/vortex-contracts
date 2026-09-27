@@ -1,8 +1,41 @@
 # Solver Registry — Design Document
 
-> **Status:** Draft — open for review before implementation issues are opened.  
+> **Status:** Partially implemented.  
 > **Closes:** #46  
-> **Last updated:** 2026-07-26
+> **Last updated:** 2026-08-28
+
+---
+
+## 0. Implementation status (#197)
+
+The **tier-perk enforcement** described in §3, §6 and §7 is now live:
+
+- A minimal `solver_registry` crate exists (`solver_registry/`). It stores an
+  admin-managed tier per solver and exposes `get_tier(solver) -> u32` plus the
+  `get_fill_window_bonus_bps` / `get_slash_bps` schedule views. Score-gated
+  automatic promotion (porting `compute_reputation_score`, `record_fill` /
+  `record_failure`, staking, `migrate_solver`) is still §2/§5/§9 future work
+  under #186.
+- `intent_settlement` calls **only** `get_tier` on the hot path and maps the
+  tier to perk values from local tables (`TIER_FILL_WINDOW_BONUS_BPS`,
+  `TIER_SLASH_BPS`). This deviates from §6's "keep `intent_settlement` free of
+  tier constants" for two reasons: one cross-contract call per
+  `accept_intent` / `slash_solver` instead of three, and the settlement
+  contract still enforces the agreed schedule even if the registry returns a
+  bad value. The two copies of the table **must be kept in sync** — a comment
+  in each says so.
+- The integration is **optional**: `set_solver_registry(None)` (the default)
+  makes every solver Unranked, and any failure of the cross-contract call
+  falls back to Unranked. `accept_intent` / `slash_solver` never hard-fail on
+  the registry.
+- **Tier snapshot timing:** the tier is read at **accept-time** and stored on
+  the `IntentRecord` (`solver_tier`). `slash_solver` uses that snapshot, not
+  the solver's live tier. Rationale: the fill window and the slash rate are
+  both part of the deal struck at accept-time, so a mid-flight promotion can't
+  soften an abandonment and a mid-flight demotion can't harden it.
+- **Fee rebate (§8) is not implemented** and is out of scope for #197. It
+  overlaps with the volume-based fee discount in #7; the two should be unified
+  in one design rather than built twice.
 
 ---
 
