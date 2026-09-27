@@ -191,6 +191,10 @@ const SLASH_COOLDOWN: u64 = 3_600; // 1 hour
 /// without getting in the way of a user correcting a single mistaken intent.
 const CANCEL_COOLDOWN: u64 = 60; // 1 minute
 
+/// #358: Minimum gap the same user must leave between `amend_intent` calls.
+/// Separate from CANCEL_COOLDOWN to allow frequent amendments for liquidity.
+const AMENDMENT_COOLDOWN: u64 = 60; // 1 minute
+
 // ─── Batch + extension limits (#202) ─────────────────────────────────────────
 
 /// Upper bound on the number of items any `batch_*` entrypoint processes in a
@@ -402,6 +406,19 @@ pub enum DataKey {
     /// touches this key, so proof-gating is fully opt-in and defaults off
     /// exactly like `DstAllowlistEnabled`.
     ProofRegistry,
+
+    /// **Persistent storage.** Timestamp of a user's most recent
+    /// `amend_intent` call (`u64`). Enforces `AMENDMENT_COOLDOWN` between amendments.
+    /// (#358)
+    AmendmentCooldown(Address),
+
+    /// **Persistent storage.** Outbound (reverse) intent record locked in escrow.
+    /// Maps outbound_intent_id -> OutboundIntentRecord. (#355)
+    OutboundIntent(BytesN<32>),
+
+    /// **Persistent storage.** All outbound intent ids submitted by a given user.
+    /// Vec<BytesN<32>>, appended by `submit_outbound_intent`. (#355)
+    UserOutboundIntents(Address),
 }
 
 // ─── Data Structs ─────────────────────────────────────────────────────────────
@@ -423,12 +440,31 @@ pub struct ProtocolConfig {
     pub max_active_intents_per_solver: u32,
 }
 
+/// #357: Optional post-fill hook that invokes a recipient contract
+#[contracttype]
+#[derive(Clone)]
+pub struct Hook {
+    pub contract: Address,      // recipient contract to invoke
+    pub symbol: Symbol,         // function to call
+    pub data: Bytes,            // encoded arguments
+    pub fail_policy: HookFailPolicy,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum HookFailPolicy {
+    Revert,                     // failing hook reverts the fill
+    Isolate,                    // failing hook emits event but doesn't revert
+}
+
 /// A user's cross-chain swap intent
 #[contracttype]
 #[derive(Clone)]
 pub struct IntentRecord {
     pub intent_id: BytesN<32>,
     pub user: Address,
+    /// #356: Optional recipient for the output (defaults to user if None)
+    pub recipient: Option<Address>,
 
     /// Source chain details (off-chain reference)
     pub src_chain: String, // "ethereum" | "base" | "polygon" etc.
@@ -441,6 +477,8 @@ pub struct IntentRecord {
 
     pub solver: Option<Address>, // assigned solver
     pub state: IntentState,
+    /// #357: Optional post-fill hook to invoke on the recipient contract
+    pub hook: Option<Hook>,
 
     pub created_at: u64,
     pub deadline: u64,
@@ -521,6 +559,42 @@ pub enum DisputeResolution {
     /// Arbiter sided with the solver: escrow still goes to the user (the fill
     /// was delivered) but no slash is applied and the protocol fee is taken.
     Dismissed,
+}
+
+/// #355: Reverse-direction intent with on-chain Stellar escrow
+#[contracttype]
+#[derive(Clone)]
+pub struct OutboundIntentRecord {
+    pub outbound_intent_id: BytesN<32>,
+    pub user: Address,
+    pub token: Address,         // Stellar token being locked
+    pub amount: i128,           // amount in token's smallest unit
+    pub dst_chain: String,      // destination chain (e.g. "ethereum")
+    pub dst_token: String,      // token address on destination chain
+    pub dst_recipient: String,  // recipient address on destination chain
+    pub min_dst_amount: i128,   // minimum acceptable delivery amount
+
+    pub solver: Option<Address>, // assigned solver
+    pub state: OutboundIntentState,
+
+    pub created_at: u64,
+    pub deadline: u64,
+    pub proof_verified_at: Option<u64>,
+
+    pub bond_token: Address,
+    pub escrow_released_at: Option<u64>,
+    pub solver_tier: u32,       // solver's tier when accepted
+}
+
+#[contracttype]
+#[derive(Clone, PartialEq, Debug)]
+pub enum OutboundIntentState {
+    EscrowLocked,       // user locked tokens, awaiting solver
+    SolverAccepted,     // solver accepted and bonded
+    ProofVerified,      // destination proof verified
+    EscrowReleased,     // escrow paid to solver
+    UserRefunded,       // deadline passed, refunded to user
+    SolverSlashed,      // solver failed to deliver, slashed
 }
 
 /// A registered solver (market maker)
@@ -752,6 +826,46 @@ pub enum Error {
     /// chain-name → Wormhole-chain-ID table, so the proof's chain cannot be
     /// validated against it.
     SrcChainNotSupported = 34,
+    /// #281: `submit_intent` was called with a `referrer` equal to the
+    /// submitting `user`.  Self-referral is rejected to prevent a user from
+    /// gaming the referral programme by naming their own address.
+    SelfReferral = 35,
+
+    /// #358: `amend_intent` was called on an intent that cannot be amended
+    /// (not in Open or Bidding state, or the amendment violates the rules).
+    IntentNotAmendable = 36,
+
+    /// #358: `amend_intent` was called with tightening changes while the
+    /// intent is not in Open state. Loosening is allowed in Open/Bidding;
+    /// tightening is only allowed in Open.
+    AmendmentTooTightening = 37,
+
+    /// #358: `amend_intent` was called with a new deadline that exceeds
+    /// the maximum intent lifetime or is in the past.
+    InvalidAmendmentDeadline = 38,
+
+    /// #358: `amend_intent` was called by the same user within the
+    /// amendment cooldown period.
+    AmendmentCooldownActive = 39,
+
+    /// #357: Hook invocation failed (only when fail_policy is Revert).
+    HookInvocationFailed = 40,
+
+    /// #357: Hook gas/resource budget exceeded the allowed maximum.
+    HookBudgetExceeded = 41,
+
+    /// #355: The supplied `outbound_intent_id` has no corresponding
+    /// `OutboundIntentRecord` in persistent storage.
+    OutboundIntentNotFound = 42,
+
+    /// #355: Insufficient escrow balance to cover the payout.
+    InsufficientEscrow = 43,
+
+    /// #355: Proof recipient or amount does not match the outbound intent.
+    ProofMismatch = 44,
+
+    /// #355: Proof destination chain doesn't match the intent's dst_chain.
+    ChainMismatch = 45,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -1068,6 +1182,9 @@ impl IntentSettlement {
         Self::require_admin(&env);
 
         if !(0..=MAX_PROTOCOL_FEE_BPS).contains(&protocol_fee_bps) {
+            panic_with_error!(&env, Error::InvalidConfig);
+        }
+        if !(0..=MAX_REFERRAL_SHARE_BPS).contains(&referral_share_bps) {
             panic_with_error!(&env, Error::InvalidConfig);
         }
         if fill_window < MIN_FILL_WINDOW_SECS {
@@ -1805,6 +1922,14 @@ impl IntentSettlement {
 
     /// User submits a swap intent. No funds are locked on Stellar at this point —
     /// the user initiates the source-chain tx separately.
+    ///
+    /// # Parameters
+    ///
+    /// - `referrer` (optional, default `None`): the address to credit with a share
+    ///   of the protocol fee when the intent is filled.  Must not equal `user`
+    ///   (self-referral is rejected with `Error::SelfReferral`).  The share is
+    ///   governed by `ProtocolConfig.referral_share_bps` and is only paid out
+    ///   when that config value is non-zero.
     #[allow(clippy::too_many_arguments)]
     pub fn submit_intent(
         env: Env,
@@ -1815,6 +1940,7 @@ impl IntentSettlement {
         dst_token: Address,
         min_dst_amount: i128,
         deadline: Option<u64>,
+        referrer: Option<Address>,
     ) -> BytesN<32> {
         // Auth audit: require_auth() is correct. The user must sign to assert
         // ownership of the address receiving output tokens (dst). If a third-party
@@ -1904,6 +2030,15 @@ impl IntentSettlement {
 
         if expiry <= now {
             panic_with_error!(&env, Error::InvalidDeadline);
+        }
+
+        // #281: self-referral guard — a user cannot name their own address
+        // as the referrer, which would let them claim referral rewards on
+        // their own volume.
+        if let Some(r) = &referrer {
+            if r == &user {
+                panic_with_error!(&env, Error::SelfReferral);
+            }
         }
 
         // Widen the preimage with a per-user nonce so that two intents from
@@ -2321,15 +2456,38 @@ impl IntentSettlement {
         // Solver delivers this fill's output to the user, then separately pays
         // the protocol fee. Each transfer happens exactly once.
         let dst_client = token::Client::new(&env, &intent.dst_token);
+
+        // Solver delivers the full requested output to the user.
         dst_client.transfer(&solver, &intent.user, &fill_amount);
 
         if fee > 0 {
+            let cfg = Self::load_config(&env);
             let fee_recipient: Address = env
                 .storage()
                 .instance()
                 .get(&DataKey::FeeRecipient)
                 .unwrap();
-            dst_client.transfer(&solver, &fee_recipient, &fee);
+            match (&intent.referrer, cfg.referral_share_bps) {
+                (Some(referrer_addr), share) if share > 0 => {
+                    let referral_amount = fee
+                        .checked_mul(share)
+                        .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow))
+                        .checked_div(10_000)
+                        .unwrap_or_else(|| panic_with_error!(&env, Error::FeeOverflow));
+                    let recipient_amount = fee - referral_amount;
+                    if referral_amount > 0 {
+                        dst_client.transfer(&solver, referrer_addr, &referral_amount);
+                    }
+                    if recipient_amount > 0 {
+                        dst_client.transfer(&solver, &fee_recipient, &recipient_amount);
+                    }
+                }
+                _ => {
+                    // No referrer or zero share: 100% to FeeRecipient
+                    // (identical to pre-#281 behaviour).
+                    dst_client.transfer(&solver, &fee_recipient, &fee);
+                }
+            }
         }
 
         env.events().publish(
@@ -2420,6 +2578,98 @@ impl IntentSettlement {
             (Symbol::new(env, "intent_cancelled"), user.clone()),
             intent_id.clone(),
         );
+    }
+
+    /// #358: Amend an open intent's price/deadline in place, keeping its id stable.
+    /// Only the user can amend, and only in Open or Bidding states.
+    /// Loosening (lower min or later deadline) always allowed; tightening only in Open.
+    pub fn amend_intent(
+        env: Env,
+        user: Address,
+        intent_id: BytesN<32>,
+        new_min_dst_amount: i128,
+        new_deadline: u64,
+    ) {
+        user.require_auth();
+        Self::bump_instance_ttl(&env);
+
+        let now = env.ledger().timestamp();
+        Self::check_amendment_cooldown(&env, &user, now);
+
+        let mut intent: IntentRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Intent(intent_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::IntentNotFound));
+
+        if intent.user != user {
+            panic_with_error!(&env, Error::Unauthorized);
+        }
+
+        // Amendment only allowed in Open or Bidding states
+        if intent.state != IntentState::Open && intent.state != IntentState::Bidding {
+            panic_with_error!(&env, Error::IntentNotAmendable);
+        }
+
+        let old_min = intent.min_dst_amount;
+        let old_deadline = intent.deadline;
+
+        // Validate new deadline within intent lifetime
+        let cfg = Self::load_config(&env);
+        if new_deadline <= now || new_deadline > now + cfg.intent_expiry {
+            panic_with_error!(&env, Error::InvalidAmendmentDeadline);
+        }
+
+        // Check if amendment is tightening (worse for solver)
+        let is_tightening = new_min_dst_amount > old_min || new_deadline < old_deadline;
+
+        // Tightening only allowed in Open state
+        if is_tightening && intent.state != IntentState::Open {
+            panic_with_error!(&env, Error::AmendmentTooTightening);
+        }
+
+        // Update intent with new values
+        intent.min_dst_amount = new_min_dst_amount;
+        intent.deadline = new_deadline;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Intent(intent_id.clone()), &intent);
+        Self::bump_intent_ttl(&env, &intent_id);
+
+        Self::stamp_amendment_cooldown(&env, &user, now);
+
+        env.events().publish(
+            (Symbol::new(&env, "intent_amended"), user.clone()),
+            (
+                intent_id.clone(),
+                old_min,
+                new_min_dst_amount,
+                old_deadline,
+                new_deadline,
+            ),
+        );
+    }
+
+    /// #358: Rate-limiting gate for amendments: panics if `user` amended within
+    /// the last `AMENDMENT_COOLDOWN` seconds.
+    fn check_amendment_cooldown(env: &Env, user: &Address, now: u64) {
+        if let Some(last_amendment_time) = env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::AmendmentCooldown(user.clone()))
+        {
+            if now < last_amendment_time + AMENDMENT_COOLDOWN {
+                panic_with_error!(env, Error::AmendmentCooldownActive);
+            }
+        }
+    }
+
+    /// #358: Records `now` as `user`'s most recent amendment, starting a fresh cooldown.
+    fn stamp_amendment_cooldown(env: &Env, user: &Address, now: u64) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::AmendmentCooldown(user.clone()), &now);
     }
 
     /// Solver begins fill by depositing dst_token into escrow. Starts dispute window.
@@ -3579,6 +3829,186 @@ impl IntentSettlement {
             Self::cancel_intent_core(&env, &user, &intent_id);
         }
         Self::stamp_cancel_cooldown(&env, &user, now);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // #355: Reverse-Direction Intents (Outbound) — Stellar-to-Chain Settlement
+    // ────────────────────────────────────────────────────────────────────────────
+
+    /// #355: Submit a reverse-direction intent: lock Stellar tokens in escrow,
+    /// solver delivers on destination chain, and escrow is released once
+    /// proof_registry confirms the destination-chain delivery.
+    pub fn submit_outbound_intent(
+        env: Env,
+        user: Address,
+        token: Address,
+        amount: i128,
+        dst_chain: String,
+        dst_token: String,
+        dst_recipient: String,
+        min_dst_amount: i128,
+        deadline: Option<u64>,
+    ) -> BytesN<32> {
+        user.require_auth();
+        Self::bump_instance_ttl(&env);
+
+        if amount <= 0 || min_dst_amount <= 0 {
+            panic_with_error!(&env, Error::ZeroAmount);
+        }
+
+        if amount > MAX_AMOUNT || min_dst_amount > MAX_AMOUNT {
+            panic_with_error!(&env, Error::AmountTooLarge);
+        }
+
+        let now = env.ledger().timestamp();
+        let cfg = Self::load_config(&env);
+        let expiry = deadline.unwrap_or(now + cfg.intent_expiry);
+
+        if expiry <= now {
+            panic_with_error!(&env, Error::InvalidDeadline);
+        }
+
+        // Token must implement SEP-41 (defer to begin_outbound_fill)
+        let token_client = token::Client::new(&env, &token);
+        let _ = token_client.decimals();
+
+        // Generate deterministic outbound intent ID
+        let nonce: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::UserNonce(user.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::UserNonce(user.clone()), &(nonce + 1));
+
+        let outbound_intent_id = Self::compute_outbound_intent_id(
+            &env,
+            &user,
+            &token,
+            amount,
+            now,
+            nonce,
+        );
+
+        // Check for duplicate
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::OutboundIntent(outbound_intent_id.clone()))
+        {
+            panic_with_error!(&env, Error::IntentAlreadyExists);
+        }
+
+        let outbound_intent = OutboundIntentRecord {
+            outbound_intent_id: outbound_intent_id.clone(),
+            user: user.clone(),
+            token: token.clone(),
+            amount,
+            dst_chain,
+            dst_token,
+            dst_recipient,
+            min_dst_amount,
+            solver: None,
+            state: OutboundIntentState::EscrowLocked,
+            created_at: now,
+            deadline: expiry,
+            proof_verified_at: None,
+            bond_token: Self::load_bond_token(&env),
+            escrow_released_at: None,
+            solver_tier: 0,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::OutboundIntent(outbound_intent_id.clone()), &outbound_intent);
+        Self::bump_intent_ttl(&env, &outbound_intent_id);
+
+        // Add to user's outbound intents list
+        let mut user_outbound: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserOutboundIntents(user.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        user_outbound.push_back(outbound_intent_id.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::UserOutboundIntents(user.clone()), &user_outbound);
+        Self::bump_user_intents_ttl(&env, &user);
+
+        env.events().publish(
+            (Symbol::new(&env, "outbound_intent_submitted"), user.clone()),
+            outbound_intent_id.clone(),
+        );
+
+        outbound_intent_id
+    }
+
+    /// #355: Solver accepts an outbound intent with a bond, committing to delivery.
+    pub fn accept_outbound_intent(
+        env: Env,
+        solver: Address,
+        outbound_intent_id: BytesN<32>,
+        bond_amount: i128,
+        bond_token: Address,
+    ) {
+        solver.require_auth();
+        Self::bump_instance_ttl(&env);
+
+        let mut outbound_intent: OutboundIntentRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OutboundIntent(outbound_intent_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::OutboundIntentNotFound));
+
+        if outbound_intent.state != OutboundIntentState::EscrowLocked {
+            panic_with_error!(&env, Error::IntentNotOpen);
+        }
+
+        let now = env.ledger().timestamp();
+        if now >= outbound_intent.deadline {
+            panic_with_error!(&env, Error::IntentExpired);
+        }
+
+        let cfg = Self::load_config(&env);
+        let min_bond = Self::get_adjusted_min_bond(&env, &bond_token);
+        if bond_amount < min_bond {
+            panic_with_error!(&env, Error::SolverBondTooLow);
+        }
+
+        // Store solver bond (simplified — real impl would track per-solver)
+        outbound_intent.solver = Some(solver.clone());
+        outbound_intent.state = OutboundIntentState::SolverAccepted;
+        outbound_intent.bond_token = bond_token;
+        outbound_intent.solver_tier = Self::solver_tier(&env, &solver);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::OutboundIntent(outbound_intent_id.clone()), &outbound_intent);
+        Self::bump_intent_ttl(&env, &outbound_intent_id);
+
+        env.events().publish(
+            (Symbol::new(&env, "outbound_intent_accepted"), solver.clone()),
+            outbound_intent_id.clone(),
+        );
+    }
+
+    /// Compute deterministic outbound intent ID from user/token/amount context
+    fn compute_outbound_intent_id(
+        env: &Env,
+        user: &Address,
+        token: &Address,
+        amount: i128,
+        timestamp: u64,
+        nonce: u64,
+    ) -> BytesN<32> {
+        let mut preimage = Bytes::new(env);
+        preimage.append(&user.clone().to_xdr(env));
+        preimage.append(&token.clone().to_xdr(env));
+        preimage.extend_from_array(&amount.to_be_bytes());
+        preimage.extend_from_array(&timestamp.to_be_bytes());
+        preimage.extend_from_array(&nonce.to_be_bytes());
+        env.crypto().sha256(&preimage).into()
     }
 
     /// Fill multiple intents in a single transaction.
