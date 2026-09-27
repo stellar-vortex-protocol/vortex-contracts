@@ -830,42 +830,6 @@ pub enum Error {
     /// submitting `user`.  Self-referral is rejected to prevent a user from
     /// gaming the referral programme by naming their own address.
     SelfReferral = 35,
-
-    /// #358: `amend_intent` was called on an intent that cannot be amended
-    /// (not in Open or Bidding state, or the amendment violates the rules).
-    IntentNotAmendable = 36,
-
-    /// #358: `amend_intent` was called with tightening changes while the
-    /// intent is not in Open state. Loosening is allowed in Open/Bidding;
-    /// tightening is only allowed in Open.
-    AmendmentTooTightening = 37,
-
-    /// #358: `amend_intent` was called with a new deadline that exceeds
-    /// the maximum intent lifetime or is in the past.
-    InvalidAmendmentDeadline = 38,
-
-    /// #358: `amend_intent` was called by the same user within the
-    /// amendment cooldown period.
-    AmendmentCooldownActive = 39,
-
-    /// #357: Hook invocation failed (only when fail_policy is Revert).
-    HookInvocationFailed = 40,
-
-    /// #357: Hook gas/resource budget exceeded the allowed maximum.
-    HookBudgetExceeded = 41,
-
-    /// #355: The supplied `outbound_intent_id` has no corresponding
-    /// `OutboundIntentRecord` in persistent storage.
-    OutboundIntentNotFound = 42,
-
-    /// #355: Insufficient escrow balance to cover the payout.
-    InsufficientEscrow = 43,
-
-    /// #355: Proof recipient or amount does not match the outbound intent.
-    ProofMismatch = 44,
-
-    /// #355: Proof destination chain doesn't match the intent's dst_chain.
-    ChainMismatch = 45,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
