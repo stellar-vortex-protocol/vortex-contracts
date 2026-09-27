@@ -169,7 +169,7 @@ fn admin_can_propose_and_accept_fee_recipient() {
     c.accept_intent(&ctx.solver, &id);
     let fee = FILL * 5 / 10_000;
     ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
-    c.fill_intent(&ctx.solver, &id, &FILL);
+    c.fill_intent(&ctx.solver, &id, &FILL, &SRC_AMT);
     assert_eq!(ctx.dst().balance(&new_recipient), fee);
 }
 
@@ -566,7 +566,7 @@ fn active_intents_counts_multiple_concurrent_accepted_intents() {
     // Clearing one via fill decrements the counter but doesn't zero it.
     let fee = FILL * 5 / 10_000;
     ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
-    c.fill_intent(&ctx.solver, &id1, &FILL);
+    c.fill_intent(&ctx.solver, &id1, &FILL, &SRC_AMT);
     assert_eq!(c.get_solver(&ctx.solver).unwrap().active_intents, 1);
     let res = c.try_deregister_solver(&ctx.solver);
     assert_eq!(res, Err(Ok(Error::SolverHasActiveIntents.into())));
@@ -588,7 +588,7 @@ fn deregister_after_fill_succeeds() {
 
     let fee = FILL * 5 / 10_000;
     ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
-    c.fill_intent(&ctx.solver, &id, &FILL);
+    c.fill_intent(&ctx.solver, &id, &FILL, &SRC_AMT);
 
     // Obligation cleared on fill, so deregistration now succeeds.
     c.deregister_solver(&ctx.solver);
@@ -816,7 +816,7 @@ fn full_lifecycle_submit_accept_fill() {
     // Fill — fund the solver with the output plus the protocol fee they pay.
     let fee = FILL * 5 / 10_000;
     ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
-    c.fill_intent(&ctx.solver, &id, &FILL);
+    c.fill_intent(&ctx.solver, &id, &FILL, &SRC_AMT);
 
     let intent = c.get_intent(&id).unwrap();
     assert!(intent.state == IntentState::Filled);
@@ -913,7 +913,7 @@ fn fill_zero_amount_fails() {
     let id = ctx.submit();
     ctx.client().accept_intent(&ctx.solver, &id);
 
-    let res = ctx.client().try_fill_intent(&ctx.solver, &id, &0);
+    let res = ctx.client().try_fill_intent(&ctx.solver, &id, &0, &SRC_AMT);
     assert_eq!(res, Err(Ok(Error::ZeroAmount.into())));
 }
 
@@ -926,7 +926,7 @@ fn fill_after_window_fails() {
 
     ctx.pass_time(FILL_WINDOW + 1);
     ctx.dst_admin().mint(&ctx.solver, &FILL);
-    let res = ctx.client().try_fill_intent(&ctx.solver, &id, &FILL);
+    let res = ctx.client().try_fill_intent(&ctx.solver, &id, &FILL, &SRC_AMT);
     assert_eq!(res, Err(Ok(Error::FillWindowExpired.into())));
 }
 
@@ -942,7 +942,7 @@ fn fill_by_wrong_solver_fails() {
     ctx.client().register_solver(&other, &BOND);
     ctx.dst_admin().mint(&other, &FILL);
 
-    let res = ctx.client().try_fill_intent(&other, &id, &FILL);
+    let res = ctx.client().try_fill_intent(&other, &id, &FILL, &SRC_AMT);
     assert_eq!(res, Err(Ok(Error::Unauthorized.into())));
 }
 
@@ -1251,7 +1251,7 @@ fn fill_intent_state_committed_before_transfer_and_double_fill_rejected() {
     ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
 
     // Happy-path fill.
-    c.fill_intent(&ctx.solver, &id, &FILL);
+    c.fill_intent(&ctx.solver, &id, &FILL, &SRC_AMT);
 
     // 1. Storage reflects Filled and fill_amount is set.
     let intent = c.get_intent(&id).unwrap();
@@ -1266,7 +1266,7 @@ fn fill_intent_state_committed_before_transfer_and_double_fill_rejected() {
     // 3. A second fill attempt is rejected before any transfer — this is exactly
     //    what a re-entrant token would hit mid-transfer after the CEI reorder.
     ctx.dst_admin().mint(&ctx.solver, &(FILL + fee)); // give solver funds again
-    let res = c.try_fill_intent(&ctx.solver, &id, &FILL);
+    let res = c.try_fill_intent(&ctx.solver, &id, &FILL, &SRC_AMT);
     assert_eq!(res, Err(Ok(Error::IntentAlreadyFilled.into())));
 
     // User's balance must not have increased — no double-payment.
@@ -1420,10 +1420,11 @@ fn two_partial_fills_complete_intent() {
 
     // First partial fill: half of MIN_DST.
     let half = MIN_DST / 2;
+    let half_src = SRC_AMT / 2;
     let fee1 = half * 5 / 10_000;
     ctx.dst_admin().mint(&ctx.solver, &(half + fee1));
     c.accept_intent(&ctx.solver, &id);
-    c.fill_intent(&ctx.solver, &id, &half);
+    c.fill_intent(&ctx.solver, &id, &half, &half_src);
 
     // Intent should now be PartiallyFilled and re-opened (solver reset).
     let intent = c.get_intent(&id).unwrap();
@@ -1436,10 +1437,11 @@ fn two_partial_fills_complete_intent() {
 
     // Second fill: the remainder — brings total to MIN_DST.
     let remainder = MIN_DST - half;
+    let remainder_src = SRC_AMT - half_src;
     let fee2 = remainder * 5 / 10_000;
     ctx.dst_admin().mint(&ctx.solver, &(remainder + fee2));
     c.accept_intent(&ctx.solver, &id);
-    c.fill_intent(&ctx.solver, &id, &remainder);
+    c.fill_intent(&ctx.solver, &id, &remainder, &remainder_src);
 
     let intent = c.get_intent(&id).unwrap();
     assert_eq!(intent.state, IntentState::Filled);
@@ -1465,10 +1467,11 @@ fn partial_fill_left_incomplete_past_deadline_can_be_expired() {
 
     // Deliver a partial fill (less than MIN_DST).
     let partial = MIN_DST / 3;
+    let partial_src = SRC_AMT / 3;
     let fee = partial * 5 / 10_000;
     ctx.dst_admin().mint(&ctx.solver, &(partial + fee));
     c.accept_intent(&ctx.solver, &id);
-    c.fill_intent(&ctx.solver, &id, &partial);
+    c.fill_intent(&ctx.solver, &id, &partial, &partial_src);
 
     // Intent is PartiallyFilled and re-opened with a fresh INTENT_EXPIRY deadline.
     assert_eq!(
@@ -1624,7 +1627,7 @@ fn get_reputation_score_after_fill_is_nonzero() {
     c.accept_intent(&ctx.solver, &id);
     let fee = FILL * 5 / 10_000;
     ctx.dst_admin().mint(&ctx.solver, &(FILL + fee));
-    c.fill_intent(&ctx.solver, &id, &FILL);
+    c.fill_intent(&ctx.solver, &id, &FILL, &SRC_AMT);
 
     let score = c.get_reputation_score(&ctx.solver).unwrap();
     assert!(score > 0, "score after fill should be > 0");
@@ -1637,7 +1640,7 @@ fn get_reputation_score_after_fill_is_nonzero() {
     // rolls back on panic_with_error, so the user's balance stays zero).
     ctx.dst_admin().mint(&ctx.solver, &overflow_fill);
 
-    let res = c.try_fill_intent(&ctx.solver, &id, &overflow_fill);
+    let res = c.try_fill_intent(&ctx.solver, &id, &overflow_fill, &SRC_AMT);
     assert_eq!(res, Err(Ok(Error::FeeOverflow.into())));
 }
 
@@ -1656,7 +1659,7 @@ fn fill_intent_fee_at_boundary_does_not_overflow() {
     ctx.dst_admin().mint(&ctx.solver, &(boundary_fill + fee));
 
     // Should succeed (no overflow).
-    c.fill_intent(&ctx.solver, &id, &boundary_fill);
+    c.fill_intent(&ctx.solver, &id, &boundary_fill, &SRC_AMT);
     assert!(c.get_intent(&id).unwrap().state == IntentState::Filled);
 }
 
@@ -1971,7 +1974,7 @@ fn unpause_restores_solver_bond_management() {
     let fee = MIN_DST * 5 / 10_000;
     ctx.dst_admin().mint(&ctx.solver, &(MIN_DST + fee));
     c.accept_intent(&ctx.solver, &id);
-    c.fill_intent(&ctx.solver, &id, &MIN_DST);
+    c.fill_intent(&ctx.solver, &id, &MIN_DST, &SRC_AMT);
 
     let intent = c.get_intent(&id).unwrap();
     assert_eq!(intent.state, IntentState::Filled);

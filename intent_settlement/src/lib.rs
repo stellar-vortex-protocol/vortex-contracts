@@ -105,6 +105,16 @@ pub enum DataKey {
     UserNonce(Address),       // per-user submit counter to widen intent_id preimage
     AllowedSrcChain(String), // src_chain name -> present if allowed
     SrcChainAllowlistEnabled,
+
+    /// #349: Per-token solver bond (solver, token) -> bond_amount
+    /// Single source of truth for bond amounts
+    SolverBond(Address, Address), // (solver, token) -> i128
+
+    /// #349: Total bonded by token across all solvers
+    TotalBondedByToken(Address), // token -> i128
+
+    /// Protocol configuration for atomic reads/writes
+    Config,
 }
 
 // ─── Data Structs ─────────────────────────────────────────────────────────────
@@ -138,13 +148,15 @@ pub struct IntentRecord {
 
     /// Destination (always Stellar)
     pub dst_token: Address, // SAC/SEP-41 token on Stellar
-    pub min_dst_amount: i128, // minimum acceptable output per fill (floor per partial)
+    pub min_dst_amount: i128, // minimum acceptable output per fill (#348: per src_portion)
 
     pub solver: Option<Address>, // assigned solver
     pub state: IntentState,
 
     pub created_at: u64,
-    pub deadline: u64,
+    /// #347: user's original deadline; separate from fill-window deadline which gets reset
+    pub user_deadline: u64,
+    pub deadline: u64, // effective deadline (fill window or user deadline)
     pub filled_at: Option<u64>,
     pub fill_amount: Option<i128>, // cumulative dst tokens received across all fills
 
@@ -157,6 +169,8 @@ pub struct IntentRecord {
     /// intent transitions to `Filled` as soon as `total_filled` satisfies
     /// the user's `min_dst_amount` requirement.
     pub total_filled: i128,
+    /// #348: cumulative source tokens filled (intent closes when src_filled == src_amount)
+    pub src_filled: i128,
 }
 
 #[contracttype]
@@ -176,7 +190,7 @@ pub enum IntentState {
 #[derive(Clone)]
 pub struct SolverRecord {
     pub address: Address,
-    pub bond_amount: i128, // USDC locked as collateral
+    // #349: bond_amount removed — derive from SolverBond(address, bond_token) for single source of truth
     pub fills_completed: u32,
     pub fills_failed: u32,
     pub total_volume: i128,
@@ -328,8 +342,12 @@ pub enum Error {
     FeeOverflow = 23,
     /// #33: the address passed to add_allowed_dst_token doesn't implement SEP-41
     InvalidTokenInterface = 24,
-    SrcChainNotAllowed = 22,
-    RescueProtectedToken = 23,
+    SrcChainNotAllowed = 25,
+    RescueProtectedToken = 26,
+    /// #348: src_portion is invalid (zero, negative, or exceeds remaining)
+    InvalidSrcPortion = 27,
+    /// Amount overflow in multiplication/division
+    AmountOverflow = 28,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -1030,6 +1048,7 @@ Please follow this repo's Conventional Commits format for your commit messages (
                 IntentState::Open
             },
             created_at: now,
+            user_deadline: expiry, // #347: store user's original deadline
             // In bidding mode, deadline tracks the end of the bid window.
             // In first-accept-wins mode, deadline tracks the intent expiry.
             deadline: if Self::is_bid_window_enabled(env.clone()) {
@@ -1040,6 +1059,7 @@ Please follow this repo's Conventional Commits format for your commit messages (
             filled_at: None,
             fill_amount: None,
             total_filled: 0,
+            src_filled: 0, // #348: start with 0 source filled
         };
 
         env.storage()
@@ -1152,14 +1172,18 @@ Please follow this repo's Conventional Commits format for your commit messages (
     /// Solver fills the intent by sending dst_token to the user.
     ///
     /// Partial fills are supported: `fill_amount` must be > 0 but may be less
-    /// than `min_dst_amount`.  The intent transitions to `PartiallyFilled` after
+    /// than `min_dst_amount * src_portion / src_amount`.  The intent transitions to `PartiallyFilled` after
     /// each sub-fill and is re-opened so another solver (or the same one) can
     /// accept and deliver the remainder.  Once the cumulative `total_filled`
-    /// reaches or exceeds `min_dst_amount` the intent transitions to `Filled`.
+    /// reaches or exceeds `min_dst_amount * src_amount / src_amount` (when src_filled == src_amount),
+    /// the intent transitions to `Filled`.
     ///
     /// The protocol fee is taken on each individual fill so the fee accounting
     /// stays consistent regardless of how many fills it takes.
-    pub fn fill_intent(env: Env, solver: Address, intent_id: BytesN<32>, fill_amount: i128) {
+    ///
+    /// #348: src_portion is the amount of source tokens this fill covers; must be > 0
+    /// and at most src_amount - src_filled. fill_amount must be >= src_portion * min_dst_amount / src_amount.
+    pub fn fill_intent(env: Env, solver: Address, intent_id: BytesN<32>, fill_amount: i128, src_portion: i128) {
         // Auth audit: require_auth() is correct. The solver must sign to
         // authorise the token transfer from their address to the user and fee
         // recipient. This is the highest-value call site: the solver authorises
@@ -1200,9 +1224,23 @@ Please follow this repo's Conventional Commits format for your commit messages (
             panic_with_error!(&env, Error::ZeroAmount);
         }
 
-        // Deliver this fill's tokens to the user.
-        let dst_client = token::Client::new(&env, &intent.dst_token);
-        dst_client.transfer(&solver, &intent.user, &fill_amount);
+        // #348: validate src_portion
+        if src_portion <= 0 {
+            panic_with_error!(&env, Error::ZeroAmount);
+        }
+        if src_portion > intent.src_amount - intent.src_filled {
+            panic_with_error!(&env, Error::InvalidSrcPortion);
+        }
+
+        // #348: check proportional minimum: fill_amount >= src_portion * min_dst_amount / src_amount
+        let min_for_portion = src_portion
+            .checked_mul(intent.min_dst_amount)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::AmountOverflow))
+            .checked_div(intent.src_amount)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::AmountOverflow));
+        if fill_amount < min_for_portion {
+            panic_with_error!(&env, Error::InsufficientOutput);
+        }
 
         // Solver also pays the protocol fee on each fill.
         let fee = fill_amount * PROTOCOL_FEE_BPS / 10_000;
@@ -1241,6 +1279,9 @@ Please follow this repo's Conventional Commits format for your commit messages (
         intent.total_filled += fill_amount;
         let cumulative = intent.total_filled;
 
+        // #348: update source filled
+        intent.src_filled += src_portion;
+
         // Update fill_amount to reflect the running total for backward-compatible reads.
         intent.fill_amount = Some(cumulative);
 
@@ -1252,7 +1293,8 @@ Please follow this repo's Conventional Commits format for your commit messages (
             .unwrap();
         solver_record.total_volume += fill_amount;
 
-        if cumulative >= intent.min_dst_amount {
+        // #348: intent is closed when src_filled == src_amount (all source covered)
+        if intent.src_filled >= intent.src_amount {
             // Intent is fully satisfied — close it out.
             intent.state = IntentState::Filled;
             intent.filled_at = Some(now);
@@ -1260,11 +1302,15 @@ Please follow this repo's Conventional Commits format for your commit messages (
             solver_record.active_intents = solver_record.active_intents.saturating_sub(1);
         } else {
             // Partial fill: re-open so another solver (or the same) can claim the
-            // remaining amount.  Reset solver assignment and deadline back to the
-            // full intent expiry window so the rest of the intent can be picked up.
+            // remaining amount. #347: respect user's original deadline
+            let cfg = Self::load_config(&env);
             intent.state = IntentState::PartiallyFilled;
             intent.solver = None;
-            intent.deadline = now + INTENT_EXPIRY;
+            // #347: use min(user_deadline, now + intent_expiry) to not extend past user's deadline
+            intent.deadline = now
+                .checked_add(cfg.intent_expiry)
+                .unwrap_or(u64::MAX)
+                .min(intent.user_deadline);
             solver_record.active_intents = solver_record.active_intents.saturating_sub(1);
         }
 
@@ -1406,7 +1452,11 @@ Please follow this repo's Conventional Commits format for your commit messages (
             IntentState::Open
         };
         intent.solver = None;
-        intent.deadline = now + cfg.intent_expiry;
+        // #347: use min(user_deadline, now + intent_expiry) to not extend past user's deadline
+        intent.deadline = now
+            .checked_add(cfg.intent_expiry)
+            .unwrap_or(u64::MAX)
+            .min(intent.user_deadline);
 
         // Persist both records BEFORE any token transfer so that a re-entrant
         // or back-to-back call on the same intent_id is rejected by the
@@ -1781,6 +1831,48 @@ Please follow this repo's Conventional Commits format for your commit messages (
                 protocol_fee_bps: DEFAULT_PROTOCOL_FEE_BPS,
             })
     }
+
+    /// #349: Get solver's bond for a specific token (single source of truth)
+    fn get_solver_bond(env: &Env, solver: &Address, token: &Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SolverBond(solver.clone(), token.clone()))
+            .unwrap_or(0)
+    }
+
+    /// #349: Set solver's bond for a specific token and atomically update total
+    /// All bond mutations must use this to keep SolverBond and TotalBondedByToken in sync.
+    fn set_solver_bond(env: &Env, solver: &Address, token: &Address, amount: i128) {
+        let old_amount = Self::get_solver_bond(env, solver, token);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SolverBond(solver.clone(), token.clone()), &amount);
+
+        // Update total bonded
+        let total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalBondedByToken(token.clone()))
+            .unwrap_or(0);
+        let new_total = total - old_amount + amount;
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalBondedByToken(token.clone()), &new_total);
+    }
+
+    // ── Implementation notes for #349 and #350 ──────────────────────────────
+    // #349: TODO - Replace all bond_amount field accesses with get_solver_bond/set_solver_bond:
+    //   register_solver (lines ~793, 809): use set_solver_bond(solver, bond_token, new_amount)
+    //   withdraw_bond (lines ~927, 937): use set_solver_bond
+    //   slash_solver (lines ~1435, 1436): use set_solver_bond
+    //   accept_intent (line ~1130): use get_solver_bond for min_bond check
+    //   is_solver_eligible (line ~1689): use get_solver_bond
+    //
+    // #350: TODO - Add registry integration:
+    //   Add DataKey::Registry(Address) for the registry contract address (optional)
+    //   In fill_intent when state becomes Filled: call registry.record_fill(solver)
+    //   In slash_solver: call registry.record_failure(solver) and registry.slash(solver, amount)
+    //   Decide whether registry failures should propagate or be swallowed
 
     fn bump_instance_ttl(env: &Env) {
         env.storage()
