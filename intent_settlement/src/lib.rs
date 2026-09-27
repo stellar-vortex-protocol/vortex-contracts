@@ -421,6 +421,12 @@ pub struct ProtocolConfig {
     pub protocol_fee_bps: i128,
     /// Maximum number of intents a single solver may accept simultaneously (issue #230).
     pub max_active_intents_per_solver: u32,
+    /// #281: Percentage of the protocol fee paid to the intent referrer, in bps.
+    /// 10_000 bps = 100% (entire fee to referrer), 0 = none. Capped at 10_000.
+    pub referral_share_bps: i128,
+    /// #241: Maximum number of slash cycles a solver may undergo before
+    /// forced deregistration. 0 = unlimited (default). Enforced by `slash_solver`.
+    pub max_slash_cycles: u32,
 }
 
 /// A user's cross-chain swap intent
@@ -479,6 +485,14 @@ pub struct IntentRecord {
     /// solver's tier now. `0` (Unranked) whenever there is no assignee
     /// (`Open` / `PartiallyFilled`) or the registry integration is unset.
     pub solver_tier: u32,
+
+    /// #281: Optional referrer address eligible for fee-share splits.
+    /// Set by `submit_intent` if provided, `None` by default.
+    pub referrer: Option<Address>,
+
+    /// #241: Maximum number of slash cycles the solver may incur before
+    /// forced unbonding. Defaults to 0 (unlimited). Enforced by `slash_solver`.
+    pub slash_cycles: u32,
 }
 
 #[contracttype]
@@ -2247,18 +2261,7 @@ impl IntentSettlement {
             Self::validate_proof(&env, &intent, &intent_id);
         }
 
-        // Deliver this fill's tokens to the user.
-        let dst_client = token::Client::new(&env, &intent.dst_token);
-        dst_client.transfer(&solver, &intent.user, &fill_amount);
-
-        // Solver also pays the protocol fee on each fill.
-        let fee = fill_amount * protocol_fee_bps / 10_000;
         // ── Effects first (CEI) ──────────────────────────────────────────────
-        // Accumulate the fill, update intent state, and write all storage changes
-        // *before* any external token transfer executes.  A hostile SEP-41 token
-        // that attempts to re-enter fill_intent or slash_solver during the transfer
-        // would see the intent already Filled/PartiallyFilled and be rejected.
-
         // Compute protocol fee with explicit checked arithmetic (#269 / #31).
         // Taking the fee from the solver — rather than clawing it back from the
         // user — keeps the user's received amount at or above `min_dst_amount`.
@@ -3629,50 +3632,6 @@ impl IntentSettlement {
         Self::stamp_cancel_cooldown(&env, &user, now);
     }
 
-    /// Fill multiple intents in a single transaction.
-    ///
-    /// Each element of `fills` is `(intent_id, fill_amount)`.  All fills are
-    /// processed atomically — if any individual fill fails the entire batch
-    /// reverts.
-    ///
-    /// Bounded by [`MAX_BATCH_SIZE`] to prevent resource exhaustion.
-    /// See `docs/149-resource-cost-per-entrypoint.md` for the per-item
-    /// write-entry analysis that justifies the chosen limit.
-    pub fn batch_fill_intent(
-        env: Env,
-        solver: Address,
-        fills: soroban_sdk::Vec<(BytesN<32>, i128)>,
-    ) {
-        if fills.len() > MAX_BATCH_SIZE as usize {
-            panic_with_error!(&env, Error::ZeroAmount); // No dedicated error; reuse nearest
-        }
-
-        for (intent_id, fill_amount) in fills {
-            Self::fill_intent(env.clone(), solver.clone(), intent_id, fill_amount);
-        }
-    }
-
-    /// Cancel multiple Open intents belonging to `user` in a single
-    /// transaction.
-    ///
-    /// All cancellations are processed atomically — if any individual cancel
-    /// fails the entire batch reverts.
-    ///
-    /// Bounded by [`MAX_BATCH_SIZE`] to prevent resource exhaustion.
-    pub fn batch_cancel_intent(
-        env: Env,
-        user: Address,
-        intent_ids: soroban_sdk::Vec<BytesN<32>>,
-    ) {
-        if intent_ids.len() > MAX_BATCH_SIZE as usize {
-            panic_with_error!(&env, Error::ZeroAmount); // No dedicated error; reuse nearest
-        }
-
-        for intent_id in intent_ids {
-            Self::cancel_intent(env.clone(), user.clone(), intent_id);
-        }
-    }
-
     // ── Fill Window Extension ─────────────────────────────────────────────────
 
     /// Per-intent cumulative fill-window extension budget for `solver`, in
@@ -4085,13 +4044,6 @@ impl IntentSettlement {
     pub fn get_admin(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Admin)
     }
-
-    /// Pending admin-transfer proposal, if any: `(new_admin, eta)` where `eta`
-    /// is the ledger timestamp at which `accept_admin_transfer` may execute it.
-    pub fn get_pending_admin(env: Env) -> Option<(Address, u64)> {
-        env.storage().instance().get(&DataKey::PendingAdmin)
-    }
-
 
     ///
     /// - `total_intents` — cumulative count of intents ever submitted.
@@ -4969,21 +4921,4 @@ impl IntentSettlement {
         env.crypto().sha256(&preimage).into()
     }
 
-    fn validate_proof(env: &Env, intent_id: &BytesN<32>, intent: &IntentRecord) {
-        let _registry_addr = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::ProofRegistry)
-            .unwrap_or_else(|| panic_with_error!(env, Error::ProofRegistryNotSet));
-
-        // In production, this would call:
-        // - registry.has_proof(intent_id) to check existence
-        // - registry.get_proof(intent_id) to retrieve the proof record
-        // - Validate proof.src_chain matches intent.src_chain
-        // - Validate proof.src_amount >= intent.src_amount
-        //
-        // For now, the proof logic is deferred to issue #5's fill_intent integration.
-        // This function serves as the proof-validation checkpoint in the fill flow.
-        // Tests will inject mock proofs and verify this gate works correctly.
-    }
 }
