@@ -105,6 +105,9 @@ pub enum ProofKey {
     Admin,
     /// Wormhole Core contract address used for VAA verification.
     WormholeCore,
+    /// Axelar Gateway contract address used for GMP message verification
+    /// (set in `initialize`).
+    AxelarGateway,
     /// Authorized emitter address for a given Wormhole source-chain ID.
     /// Key: `chain_id: u32` (wraps a `u16`) → `emitter: BytesN<32>`.
     AuthorizedEmitter(u32),
@@ -114,6 +117,9 @@ pub enum ProofKey {
     /// sequence)` pair has already been processed, regardless of which
     /// `intent_id` it carried.
     SeenVaa(u32, u64),
+    /// Authorized source address for a given Axelar source-chain name.
+    /// Key: `chain_name: Symbol` → `source_address: String`.
+    AuthorizedAxelarSource(Symbol),
 }
 
 // ─── Data Types ───────────────────────────────────────────────────────────────
@@ -249,6 +255,47 @@ impl ProofRegistry {
     /// The configured Wormhole Core contract address, or `None` before init.
     pub fn get_wormhole_core(env: Env) -> Option<Address> {
         env.storage().instance().get(&ProofKey::WormholeCore)
+    }
+
+    /// Admin-only: register the trusted source address for an Axelar source
+    /// chain. Only messages whose `source_address` matches the value stored
+    /// for their `source_chain` are accepted by `receive_message_axelar`.
+    pub fn set_authorized_axelar_source(env: Env, chain_name: Symbol, source_address: String) {
+        Self::require_admin(&env);
+        env.storage().instance().set(
+            &ProofKey::AuthorizedAxelarSource(chain_name.clone()),
+            &source_address,
+        );
+        Self::bump_instance_ttl(&env);
+        env.events().publish(
+            (Symbol::new(&env, "axelar_source_authorized"),),
+            (chain_name, source_address),
+        );
+    }
+
+    /// Admin-only: remove the trusted source for an Axelar source chain, so
+    /// `receive_message_axelar` rejects every message from that chain.
+    pub fn remove_authorized_axelar_source(env: Env, chain_name: Symbol) {
+        Self::require_admin(&env);
+        env.storage()
+            .instance()
+            .remove(&ProofKey::AuthorizedAxelarSource(chain_name.clone()));
+        Self::bump_instance_ttl(&env);
+        env.events()
+            .publish((Symbol::new(&env, "axelar_source_removed"),), chain_name);
+    }
+
+    /// Return the authorized source address for `chain_name`, or `None` if
+    /// unset.
+    pub fn get_authorized_axelar_source(env: Env, chain_name: Symbol) -> Option<String> {
+        env.storage()
+            .instance()
+            .get(&ProofKey::AuthorizedAxelarSource(chain_name))
+    }
+
+    /// The configured Axelar Gateway contract address, or `None` before init.
+    pub fn get_axelar_gateway(env: Env) -> Option<Address> {
+        env.storage().instance().get(&ProofKey::AxelarGateway)
     }
 
     // ── Message Receipt ───────────────────────────────────────────────────────
@@ -398,7 +445,9 @@ impl ProofRegistry {
         }
 
         // Verify source authorization
-        if let Some(authorized_source) = Self::get_authorized_axelar_source(&env, source_chain.clone()) {
+        if let Some(authorized_source) =
+            Self::get_authorized_axelar_source(env.clone(), source_chain.clone())
+        {
             if authorized_source != source_address {
                 panic_with_error!(&env, Error::EmitterNotAuthorized);
             }
