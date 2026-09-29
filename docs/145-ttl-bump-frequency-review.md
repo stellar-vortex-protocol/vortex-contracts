@@ -68,3 +68,34 @@ short-circuits below-threshold. A guest-side threshold gate would add code
 and, in the common case, no saving — in the rare case, an extra host call.
 The current constants and their rationale are documented in
 [docs/ttl-constants-rationale.md](ttl-constants-rationale.md).
+
+---
+
+## 5. Issue #371: Permissionless intent pruning (`close_intent`)
+
+The addition of `close_intent` (issue #371) changes the retention picture for
+terminal intents:
+
+* **Before #371:** terminal `IntentRecord` entries stayed in persistent storage
+  until the Soroban ledger archived them after TTL expiry. The protocol kept
+  bumping TTL on those entries whenever they were touched, potentially keeping
+  them alive indefinitely.
+
+* **After #371:** `close_intent(intent_id)` can be called by anyone after
+  `intent.terminal_at + intent_retention_secs <= now` (default 30 days).
+  It deletes the record and all ancillary keys (`IntentFillHistory`,
+  `ExtensionGranted`, `BestBid`, the `UserIntents` bucket slot) and emits
+  an `intent_closed` event. An `IntentTombstone` is left in place
+  (persistent, TTL-bumped) to prevent id reuse.
+
+* **TTL implication:** closed intents no longer accumulate rent.
+  `IntentTombstone` entries are cheap (a single `bool`) and share the same
+  `PERSISTENT_TTL_THRESHOLD`/`PERSISTENT_TTL_EXTEND_TO` schedule — they
+  expire naturally once no one touches them for 30 days.
+
+* **Retention is configurable** via `set_intent_retention(secs)` (admin-only).
+  The default is `DEFAULT_INTENT_RETENTION_SECS` = 2 592 000 s (30 days).
+  Reading via `get_intent_retention()`.
+
+This means the storage growth rate for terminal intents is now bounded by
+the throughput × retention window rather than by the full protocol lifetime.
