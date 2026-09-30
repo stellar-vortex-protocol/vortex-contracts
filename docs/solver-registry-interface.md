@@ -46,7 +46,15 @@ and currently returns 0 for every tier.
 | Function | Auth | Notes |
 |---|---|---|
 | `initialize(admin, bond_token, fee_recipient)` | `admin` | Once. Seeds the default tier table. |
-| `set_writer(writer)` | admin | Address allowed to drive the write path (§2.3). |
+| `set_writer(writer)` | admin | Sets the **initial** address allowed to drive the write path (§2.3). Fails with `WriterAlreadySet` once a writer exists. |
+| `propose_writer(new_writer)` | admin | Starts a writer rotation; `execute_writer` allowed after `WRITER_TIMELOCK_DELAY` (48 h). A new proposal replaces the pending one and resets the timer. Emits `writer_proposed(new_writer, eta)`. |
+| `execute_writer(new_writer)` | admin | Applies the pending rotation once the timelock has elapsed; `new_writer` must match the proposal. Emits `writer_set`. |
+| `cancel_writer()` | admin | Discards the pending rotation. Emits `writer_proposal_cancelled`. |
+| `get_pending_writer()` | — | `Option<(Address, u64)>`: pending writer and its eta. |
+| `propose_admin(new_admin)` | admin | Starts an admin handover; `accept_admin` allowed after `ADMIN_TIMELOCK_DELAY` (48 h). A new proposal replaces the pending one and resets the timer. Emits `admin_transfer_proposed(new_admin, eta)`. |
+| `accept_admin(new_admin)` | `new_admin` | Completes the handover once the timelock has elapsed; must be the proposed address. Emits `admin_transferred(old, new)`. |
+| `cancel_admin_transfer()` | admin | Discards the pending handover. Emits `admin_transfer_cancelled`. |
+| `get_pending_admin()` | — | `Option<(Address, u64)>`: proposed admin and its eta. |
 | `set_tier_threshold(tier, min_bond, min_score_bps)` | admin | `tier ∈ 1..=4`; see 2.4. |
 
 ### 2.2 Solver self-service
@@ -62,9 +70,17 @@ and currently returns 0 for every tier.
 
 | Function | Returns | Effect |
 |---|---|---|
-| `record_fill(caller, solver, amount)` | — | `fills_completed += 1`, `total_volume += amount`. |
-| `record_failure(caller, solver)` | — | `fills_failed += 1` (no bond movement). |
-| `slash(caller, solver)` | `(slash_amount: i128, new_tier: u32)` | Takes `bond * slash_bps(tier) / 10_000` (min 1), transfers it to the fee recipient, `fills_failed += 1`. |
+| `record_fill(caller, solver, intent_id, amount)` | — | `fills_completed += 1`, `total_volume += amount`. |
+| `record_failure(caller, solver, intent_id)` | — | `fills_failed += 1` (no bond movement). |
+| `slash(caller, solver, intent_id)` | `(slash_amount: i128, new_tier: u32)` | Takes `bond * slash_bps(tier) / 10_000` (min 1), transfers it to the fee recipient, `fills_failed += 1`. |
+
+Each write is **exactly once per `intent_id`** (#390): a second `record_fill`,
+`record_failure` or `slash` for the same intent fails with `AlreadyRecorded`,
+whatever the solver. Keys are per action, so a `record_failure` and a `slash`
+for the same intent are independent. A write that reverts (e.g.
+`SolverNotRegistered`) does not consume its key. Check with
+`is_intent_recorded(action, intent_id)`, where `action` is `fill`, `failure`
+or `slash`.
 
 `caller` is explicit (mirrors `intent_settlement::pause`) so the registry can
 accept calls from either the admin or the settlement contract without an
@@ -157,6 +173,12 @@ yield the same outputs in `intent_settlement`:
 | 10 | `ThresholdOutOfBounds` | threshold value outside its bound |
 | 11 | `ThresholdsNotMonotonic` | thresholds not strictly increasing |
 | 12 | `WriterNotSet` | write path used before `set_writer` by a non-admin caller |
+| 13 | `TimelockNotElapsed` | `execute_writer` before the rotation eta |
+| 14 | `NoPendingWriter` | `execute_writer` / `cancel_writer` with no rotation pending |
+| 15 | `WriterAlreadySet` | `set_writer` once a writer exists (rotate via `propose_writer`) |
+| 16 | `AlreadyRecorded` | write-path call repeated for an `intent_id` already recorded for that action |
+| 17 | `AdminTimelockNotElapsed` | `accept_admin` before the handover eta |
+| 18 | `NoPendingAdminTransfer` | `accept_admin` / `cancel_admin_transfer` with no handover pending |
 
 ---
 

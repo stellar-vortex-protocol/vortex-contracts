@@ -20,114 +20,15 @@
   ],
   "item": [
     {
-      "name": "get_protocol_params",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": "{{rpc_url}}",
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_protocol_params\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_protocol_params_tx_xdr}}\" }\n}"
-        },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_protocol_params"
-      }
-    },
-    {
-      "name": "get_intent",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": "{{rpc_url}}",
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_intent\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_intent_tx_xdr}}\" }\n}"
-        },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_intent --intent_id {{intent_id}}"
-      }
-    },
-    {
-      "name": "get_solver",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": "{{rpc_url}}",
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_solver\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_solver_tx_xdr}}\" }\n}"
-        },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_solver --solver {{solver_address}}"
-      }
-    },
-    {
-      "name": "get_reputation_score",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": "{{rpc_url}}",
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_reputation_score\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_reputation_score_tx_xdr}}\" }\n}"
-        },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_reputation_score --solver {{solver_address}}"
-      }
-    },
-    {
-      "name": "is_solver_eligible",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": "{{rpc_url}}",
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"is_solver_eligible\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{is_solver_eligible_tx_xdr}}\" }\n}"
-        },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- is_solver_eligible --solver {{solver_address}}"
-      }
-    },
-    {
-      "name": "get_fee_recipient",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": "{{rpc_url}}",
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_fee_recipient\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_fee_recipient_tx_xdr}}\" }\n}"
-        },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_fee_recipient"
-      }
-    },
-    {
-      "name": "get_pending_fee_recipient",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": "{{rpc_url}}",
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_pending_fee_recipient\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_pending_fee_recipient_tx_xdr}}\" }\n}"
-        },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_pending_fee_recipient"
-      }
-    },
-    {
-      "name": "get_bond_token",
-      "request": {
-        "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "url": "{{rpc_url}}",
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_bond_token\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_bond_token_tx_xdr}}\" }\n}"
-        },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_bond_token"
-      }
-    },
-    {
       "name": "get_admin",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "url": "{{rpc_url}}",
         "body": {
           "mode": "raw",
@@ -137,49 +38,375 @@
       }
     },
     {
-      "name": "get_stats",
+      "name": "get_arbiter",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "url": "{{rpc_url}}",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_stats\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_stats_tx_xdr}}\" }\n}"
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_arbiter\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_arbiter_tx_xdr}}\" }\n}"
         },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_stats"
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_arbiter"
       }
     },
     {
-      "name": "get_min_bond",
+      "name": "get_best_bid",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "url": "{{rpc_url}}",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_min_bond\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_min_bond_tx_xdr}}\" }\n}"
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_best_bid\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_best_bid_tx_xdr}}\" }\n}"
         },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_min_bond"
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_best_bid --intent_id {{intent_id}}"
       }
     },
     {
-      "name": "list_intents_by_user",
+      "name": "get_bond_token",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "url": "{{rpc_url}}",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"list_intents_by_user\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{list_intents_by_user_tx_xdr}}\" }\n}"
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_bond_token\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_bond_token_tx_xdr}}\" }\n}"
         },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- list_intents_by_user --user {{user_address}}"
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_bond_token"
+      }
+    },
+    {
+      "name": "get_bond_token_min",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_bond_token_min\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_bond_token_min_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_bond_token_min --solver {{solver_address}} --token {{token_address}}"
+      }
+    },
+    {
+      "name": "get_config",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_config\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_config_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_config"
+      }
+    },
+    {
+      "name": "get_effective_intent_state",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_effective_intent_state\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_effective_intent_state_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_effective_intent_state --intent_id {{intent_id}}"
+      }
+    },
+    {
+      "name": "get_fee_recipient",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_fee_recipient\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_fee_recipient_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_fee_recipient"
+      }
+    },
+    {
+      "name": "get_intent",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_intent\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_intent_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_intent --intent_id {{intent_id}}"
+      }
+    },
+    {
+      "name": "get_max_active_intents_per_solver",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_max_active_intents_per_solver\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_max_active_intents_per_solver_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_max_active_intents_per_solver"
+      }
+    },
+    {
+      "name": "get_min_bond_multiplier",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_min_bond_multiplier\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_min_bond_multiplier_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_min_bond_multiplier --solver {{solver_address}}"
+      }
+    },
+    {
+      "name": "get_pauser",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_pauser\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_pauser_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_pauser"
+      }
+    },
+    {
+      "name": "get_pending_admin",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_pending_admin\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_pending_admin_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_pending_admin"
+      }
+    },
+    {
+      "name": "get_pending_fee_recipient",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_pending_fee_recipient\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_pending_fee_recipient_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_pending_fee_recipient"
+      }
+    },
+    {
+      "name": "get_pending_upgrade",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_pending_upgrade\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_pending_upgrade_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_pending_upgrade"
+      }
+    },
+    {
+      "name": "get_proof_registry",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_proof_registry\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_proof_registry_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_proof_registry"
+      }
+    },
+    {
+      "name": "get_protocol_health",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_protocol_health\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_protocol_health_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_protocol_health"
+      }
+    },
+    {
+      "name": "get_reputation_score",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_reputation_score\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_reputation_score_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_reputation_score --solver {{solver_address}}"
+      }
+    },
+    {
+      "name": "get_solver",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_solver\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_solver_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_solver --solver {{solver_address}}"
+      }
+    },
+    {
+      "name": "get_solver_bond",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_solver_bond\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_solver_bond_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_solver_bond --solver {{solver_address}} --token {{token_address}}"
+      }
+    },
+    {
+      "name": "get_solver_bonds",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_solver_bonds\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_solver_bonds_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_solver_bonds --solver {{solver_address}}"
       }
     },
     {
       "name": "get_solver_count",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "url": "{{rpc_url}}",
         "body": {
           "mode": "raw",
@@ -189,16 +416,273 @@
       }
     },
     {
-      "name": "get_protocol_health",
+      "name": "get_solver_intents",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "url": "{{rpc_url}}",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_protocol_health\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_protocol_health_tx_xdr}}\" }\n}"
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_solver_intents\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_solver_intents_tx_xdr}}\" }\n}"
         },
-        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_protocol_health"
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_solver_intents --solver {{solver_address}}"
+      }
+    },
+    {
+      "name": "get_solver_routes",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_solver_routes\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_solver_routes_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_solver_routes --solver {{solver_address}}"
+      }
+    },
+    {
+      "name": "get_stats",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_stats\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_stats_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_stats"
+      }
+    },
+    {
+      "name": "get_token_stats",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"get_token_stats\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{get_token_stats_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- get_token_stats --token {{token_address}}"
+      }
+    },
+    {
+      "name": "is_allowed_bond_token",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"is_allowed_bond_token\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{is_allowed_bond_token_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- is_allowed_bond_token --solver {{solver_address}}"
+      }
+    },
+    {
+      "name": "is_bid_window_enabled",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"is_bid_window_enabled\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{is_bid_window_enabled_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- is_bid_window_enabled"
+      }
+    },
+    {
+      "name": "is_dst_allowlist_enabled",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"is_dst_allowlist_enabled\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{is_dst_allowlist_enabled_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- is_dst_allowlist_enabled"
+      }
+    },
+    {
+      "name": "is_dst_token_allowed",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"is_dst_token_allowed\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{is_dst_token_allowed_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- is_dst_token_allowed --solver {{solver_address}}"
+      }
+    },
+    {
+      "name": "is_paused",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"is_paused\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{is_paused_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- is_paused"
+      }
+    },
+    {
+      "name": "is_solver_eligible",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"is_solver_eligible\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{is_solver_eligible_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- is_solver_eligible --solver {{solver_address}}"
+      }
+    },
+    {
+      "name": "is_src_chain_allowed",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"is_src_chain_allowed\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{is_src_chain_allowed_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- is_src_chain_allowed"
+      }
+    },
+    {
+      "name": "is_src_chain_allowlist_enabled",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"is_src_chain_allowlist_enabled\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{is_src_chain_allowlist_enabled_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- is_src_chain_allowlist_enabled"
+      }
+    },
+    {
+      "name": "list_allowed_dst_tokens",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"list_allowed_dst_tokens\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{list_allowed_dst_tokens_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- list_allowed_dst_tokens"
+      }
+    },
+    {
+      "name": "list_intents_by_user",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"list_intents_by_user\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{list_intents_by_user_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- list_intents_by_user --user {{user_address}}"
+      }
+    },
+    {
+      "name": "list_solvers",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{rpc_url}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"list_solvers\",\n  \"method\": \"simulateTransaction\",\n  \"params\": { \"transaction\": \"{{list_solvers_tx_xdr}}\" }\n}"
+        },
+        "description": "Build XDR for: stellar contract invoke --id {{contract_id}} --source {{source_account}} --network testnet -- list_solvers --start {{start}} --limit {{limit}}"
       }
     }
   ]

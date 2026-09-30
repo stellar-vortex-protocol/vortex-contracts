@@ -33,6 +33,7 @@ on:
 #   wasm-size     — checkout, build, STEP_SUMMARY    → contents: read  ✓
 #   proptest      — checkout, cargo test             → contents: read  ✓
 #   audit         — checkout, cargo audit            → contents: read  ✓
+#   secrets-scan  — checkout only                    → contents: read  ✓
 #   mutants       — checkout, cargo mutants          → contents: read  ✓
 permissions:
   contents: read
@@ -43,6 +44,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changelog:
+    name: Changelog enforcement
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check CHANGELOG.md updated for source changes
+        shell: bash
+        run: |
+          # Skip check if PR has the 'no-changelog-needed' label
+          LABELS=$(gh pr view ${{ github.event.pull_request.number }} --json labels --jq '.labels[].name' || true)
+          if echo "$LABELS" | grep -q "no-changelog-needed"; then
+            echo "✓ PR labeled 'no-changelog-needed' — changelog check skipped"
+            exit 0
+          fi
+
+          # Get list of changed files in this PR
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
+
+          # Check if any source files changed (intent_settlement/src/ or proof_registry/src/)
+          SOURCE_FILES_CHANGED=$(echo "$CHANGED_FILES" | grep -E '(intent_settlement/src/|proof_registry/src/)' || true)
+
+          if [ -z "$SOURCE_FILES_CHANGED" ]; then
+            echo "✓ No source files changed — changelog not required"
+            exit 0
+          fi
+
+          # Check if CHANGELOG.md was updated
+          CHANGELOG_CHANGED=$(echo "$CHANGED_FILES" | grep -E '^CHANGELOG\.md$' || true)
+
+          if [ -z "$CHANGELOG_CHANGED" ]; then
+            echo "❌ CHANGELOG enforcement failed"
+            echo ""
+            echo "Source files changed but CHANGELOG.md was not updated:"
+            echo "$SOURCE_FILES_CHANGED"
+            echo ""
+            echo "CONTRIBUTING.md requires: 'CHANGELOG.md updated under [Unreleased]'"
+            echo ""
+            echo "Options:"
+            echo "  1. Update CHANGELOG.md with your changes (preferred)"
+            echo "  2. Add 'no-changelog-needed' label if this PR is:"
+            echo "     - Pure test-only changes"
+            echo "     - Comment-only / documentation-only changes"
+            echo "     - CI/tooling changes with no impact on contract behavior"
+            exit 1
+          fi
+
+          echo "✓ CHANGELOG.md was updated"
+          exit 0
+    env:
+      GH_TOKEN: ${{ github.token }}
+
   fmt:
     name: Formatting (${{ matrix.crate }})
     runs-on: ubuntu-latest
@@ -108,7 +163,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test
+        run: cargo test --locked
 
   wasm-size:
     name: Wasm size budget (${{ matrix.crate }})
@@ -136,7 +191,7 @@ jobs:
             | sudo tar -xz -C /usr/local --strip-components=1
           wasm-opt --version
       - name: Build wasm
-        run: cargo build --target wasm32-unknown-unknown --release
+        run: cargo build --target wasm32-unknown-unknown --release --locked
       - name: Optimize wasm
         shell: bash
         run: |
@@ -200,9 +255,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
-        run: cargo test
+        run: cargo test --locked
       - name: Build wasm
-        run: cargo build --target wasm32-unknown-unknown --release
+        run: cargo build --target wasm32-unknown-unknown --release --locked
 
   proptest:
     name: Bond-conservation proptest
@@ -224,7 +279,7 @@ jobs:
       - name: Bond conservation proptest
         # PROPTEST_CASES controls how many random sequences are generated per
         # test; 256 balances coverage against CI runtime.
-        run: PROPTEST_CASES=256 cargo test --features testutils -- bond_conservation
+        run: PROPTEST_CASES=256 cargo test --features testutils --locked -- bond_conservation
 
   audit:
     name: Dependency audit (${{ matrix.crate }})
@@ -247,6 +302,24 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Audit dependencies
         run: cargo audit
+
+  secrets-scan:
+    name: Secrets scanning
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). Inherits workflow-level minimum.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history required for gitleaks to detect secrets in commits
+          fetch-depth: 0
+      - name: Scan for secrets with gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          config-path: .gitleaks.toml
+          # --redact: do not print the actual secret value in CI logs
+          args: --redact
+          # Fail the job if secrets are detected
+          fail: true
 
   mutants:
     name: Mutation testing
@@ -271,3 +344,146 @@ jobs:
         run: cargo install cargo-mutants --locked
       - name: Run mutation tests
         run: cargo mutants --copy-target=false
+
+  integration-test:
+    name: Soroban standalone integration test
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). The test runs a local Docker
+    # container and makes requests to it via HTTP — no GitHub API calls.
+    # Inherits workflow-level minimum.
+    services:
+      docker:
+        image: docker:dind
+        options: >-
+          --privileged
+          --health-cmd "docker ps"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust and Stellar CLI
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: intent_settlement
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+      - name: Install required tools
+        run: |
+          apt-get update
+          apt-get install -y docker.io curl jq
+      - name: Build contract
+        run: |
+          cd intent_settlement
+          stellar contract build
+      - name: Run end-to-end integration test
+        run: bash scripts/e2e-test.sh
+        timeout-minutes: 10
+
+  view-calls-sync:
+    name: Check view-calls collection sync (Issue #290)
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). This job just runs a shell script
+    # to verify the Postman collection is in sync with contract view functions.
+    # Inherits workflow-level minimum.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Postman collection sync
+        run: scripts/check-view-calls-sync.sh
+        shell: bash
+
+  risk-aware-solver-bot-tests:
+    name: Test risk_aware_solver_bot.py (Issue #293)
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). Pytest runs in-process, no network calls.
+    # Inherits workflow-level minimum.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+      - name: Install dependencies
+        run: pip install pytest pytest-cov
+      - name: Run pytest suite
+        run: pytest examples/tests/ -v --cov=examples --cov-report=term-missing
+      - name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: examples
+          fail_ci_if_error: false
+
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). cargo-llvm-cov generates coverage
+    # in a runner-local temp directory and uploads via codecov-action (HTTPS,
+    # not GitHub API). Inherits workflow-level minimum.
+    defaults:
+      run:
+        working-directory: intent_settlement
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: intent_settlement
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: Generate coverage
+        # Run coverage against the host-target test build (the same one
+        # `cargo test` uses), not the wasm32 artifact. The testutils feature
+        # enables test utilities for this coverage run.
+        run: cargo llvm-cov --features testutils --lcov --output-path coverage.lcov
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./intent_settlement/coverage.lcov
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  resource-cost-drift:
+    name: Resource cost drift detection
+    runs-on: ubuntu-latest
+    # Needs: contents: read (checkout only). Regenerates benchmark measurements
+    # and diffs against the committed doc. Inherits workflow-level minimum.
+    # This job is advisory (non-blocking) until we establish baselines and set
+    # it as required-check when drift detection matures.
+    defaults:
+      run:
+        working-directory: intent_settlement
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: intent_settlement
+      - name: Check resource cost drift
+        # Runs the drift detection script which:
+        # 1. Parses the baseline from docs/149-resource-cost-per-entrypoint.md
+        # 2. Regenerates measurements using cargo test bench::resource_cost_report
+        # 3. Compares and flags any entrypoint drifting > ±10%
+        run: |
+          echo "### Resource Cost Drift Detection" >> "$GITHUB_STEP_SUMMARY"
+          if bash ../scripts/check-resource-cost-drift.sh >> "$GITHUB_STEP_SUMMARY" 2>&1; then
+            echo "✅ All resource costs within tolerance" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ Resource cost drift detected (advisory check)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+

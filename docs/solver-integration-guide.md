@@ -490,3 +490,53 @@ MAIN LOOP (each new ledger)
         ├── bond_amount check    →  alert if < 2 × MIN_BOND
         └── is_paused?           →  alert if true unexpectedly
 ```
+
+---
+
+## Runnable Reference Implementation
+
+For a concrete demonstration of the full operational loop, see
+[`examples/reference-solver-bot.js`](../examples/reference-solver-bot.js).
+
+The reference implementation shows:
+- Startup eligibility checks via `is_solver_eligible()`
+- Polling for open intents via `list_open_intents()`
+- Accepting an intent via `accept_intent()`
+- Filling an intent via `fill_intent()`
+
+Usage:
+
+```bash
+export VORTEX_CONTRACT_ID=<CONTRACT_ID>
+export SOLVER_ADDRESS=<SOLVER_ADDRESS>
+export SOLVER_SECRET_KEY=<SOLVER_SECRET_KEY>
+export HORIZON_URL=https://horizon-testnet.stellar.org
+
+node examples/reference-solver-bot.js
+```
+
+**Note:** This example is simplified for educational purposes. Production
+solvers should implement:
+- Event streaming instead of polling
+- Multi-chain liquidity management
+- Comprehensive error handling and retry logic
+- Bond health monitoring and rebalancing
+- Dispute resolution handling
+- Rate limiting and backpressure management
+
+## Feedback & Support
+
+### Operational Concerns & Feedback
+
+If you encounter operational constraints, market-design concerns, or protocol friction that affects your solver business, we want to hear about it. Use the [Solver Feedback Process](./solver-feedback-process.md) to raise concerns distinct from bug reports or formal governance proposals.
+
+Examples of actionable solver feedback:
+- "The fill window is systematically too short for route X"
+- "Bond requirements disproportionately affect smaller solvers"
+- "The fee tier thresholds disadvantage solvers with specific execution profiles"
+
+Solver feedback is triaged within 7 days and may inform future protocol governance. See [solver-feedback-process.md](./solver-feedback-process.md) for details.
+
+### Slash Appeals
+
+If you were slashed and believe it was unfair, see the [Slash Appeal Process](./dispute-resolution-design.md) for how to formally contest the slash event.

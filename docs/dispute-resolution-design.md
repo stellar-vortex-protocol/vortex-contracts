@@ -2,6 +2,8 @@
 
 Tracking issue: [#48](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/48)
 
+**Arbiter Selection Process:** See [`docs/arbiter-election-process.md`](./arbiter-election-process.md) (issue #309) for how the community nominates and endorses arbiter candidates. This document describes dispute resolution mechanics; arbiter-election describes who serves on the committee.
+
 ---
 
 ## Problem statement
@@ -147,6 +149,11 @@ for testnet — it requires no new storage key or governance mechanism.
 by admin via `set_arbiter(env, new_arbiter: Address)`. The arbiter can be:
 - A protocol-controlled multisig (3-of-5)
 - A future `solver_registry` contract that runs a reputation-weighted jury
+
+**Arbiter governance:** See [`docs/arbiter-code-of-conduct.md`](./arbiter-code-of-conduct.md)
+(issue #300) for the complete governance policy, eligibility criteria, conflict-of-interest
+disclosure requirements, recusal procedures, and decision-rationale standards that arbiters
+must follow in both v1 (admin arbiter) and v2+ (committee arbiters).
 
 **Out of scope for this design:** fully trustless arbitration (requires a
 cross-chain proof oracle).

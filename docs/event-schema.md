@@ -536,3 +536,49 @@ resubmit a fresh intent (issue #241).
    directly, bounded at `MAX_FILL_HISTORY` (20) entries with the oldest
    entry evicted first once the cap is reached. For intents with more than
    20 partial fills, event replay is still required for the full history.
+
+---
+
+## Issue #377 — SDK upgrade migration note
+
+All crates currently pin `soroban-sdk = "21.0.0"`. When upgrading to the
+next major release:
+
+1. **Typed events** (`#[contractevent]`): replace raw
+   `env.events().publish((Symbol::new(...),), data)` calls with typed structs
+   annotated `#[contractevent]`. The encoding of topics and data does not
+   change for simple `(symbol, address)` patterns, but compound topics may
+   need verification against the indexer fixtures.
+
+2. **Test registration**: `env.register_contract(None, T)` becomes
+   `env.register(T, ())` in sdk ≥ 22. The bench and test files already use
+   `register_stellar_asset_contract_v2` (the newer API).
+
+3. **TTL/auth APIs**: no breaking changes expected for the patterns used here
+   (`extend_ttl`, `require_auth`, `mock_all_auths`).
+
+4. **Event compatibility**: run the reference-indexer test suite
+   (`indexer/reference-indexer.test.js`) against fixtures generated with both
+   SDK versions before merging. Any encoding change must be documented here.
+
+---
+
+## Issue #378 — Policy hook events
+
+#### `policy_proposed`
+
+Emitted by `propose_set_policy`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| topics[0] | `Symbol("policy_proposed")` | event name |
+| data | `(Option<Address>, u64)` | proposed policy address (None = clear), ETA timestamp |
+
+#### `policy_updated`
+
+Emitted by `execute_set_policy`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| topics[0] | `Symbol("policy_updated")` | event name |
+| data | `Option<Address>` | new active policy address (None = cleared) |

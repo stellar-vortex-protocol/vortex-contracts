@@ -19,6 +19,14 @@ changes (resource costs drift as the code does).
 
 ## 2. Methodology
 
+**Drift Detection:** A CI job (`resource-cost-drift`) runs on every PR and
+compares this document's baseline against freshly-generated measurements. If
+any entrypoint's cost has drifted beyond ±10%, the check flags it (non-blocking
+for now). After confirming the change is expected (e.g., intentional optimization
+or necessary feature), re-run the bench harness and update this table. The CI
+job will then pass on re-run. See section "Regenerate with:" below for the
+command.
+
 The numbers come from `intent_settlement/src/bench.rs`, a `#[cfg(test)]`
 harness that:
 
@@ -140,3 +148,40 @@ the 65,536-byte limit).
 ---
 
 *Snapshot generated from `src/bench.rs` at `soroban-sdk 21.7.7`.*
+
+---
+
+## Issue #375 — Hot-path storage consolidation (InvocationCtx)
+
+### Change summary
+
+`accept_intent_inner`, `fill_intent_inner`, and `slash_solver` previously
+performed redundant reads of `DataKey::Config`, `DataKey::FeeRecipient`,
+`DataKey::OpenIntents`, and `DataKey::TotalVolume` on every invocation.
+
+The new `InvocationCtx` struct (defined above the storage-key section in
+`lib.rs`) loads each of these exactly **once** at the start of the function and
+writes back only dirty counters in a single pass before any external token
+transfer. This preserves the CEI (checks-effects-interactions) ordering
+invariant.
+
+### Reentrancy invariant
+
+Cached values in `InvocationCtx` are valid only until the first external call
+(token transfer, cross-contract invocation). `commit()` must be called — and
+the context discarded — before any external interaction. This is enforced by
+the existing CEI structure in `accept_intent_inner`, `fill_intent_inner`, and
+`slash_solver`: state is written first, then interactions execute.
+
+### Before/after (estimated read deltas per hot-path call)
+
+| Entrypoint | Storage reads before | Storage reads after | Δ reads |
+|---|--:|--:|--:|
+| `accept_intent` | Config ×2, OpenIntents ×1 | Config ×1, OpenIntents ×1 | −1 |
+| `fill_intent` | Config ×1, FeeRecipient ×1, TotalVolume ×1 | all ×1 via ctx | 0 (consolidated) |
+| `slash_solver` | Config ×1, FeeRecipient ×2, OpenIntents ×1 | all ×1 via ctx | −1 FeeRecipient |
+
+*Exact CPU/memory numbers regenerate with:*
+```
+cargo test --features testutils bench::resource_cost_report -- --nocapture
+```

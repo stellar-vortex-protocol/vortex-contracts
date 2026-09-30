@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  # Stellar quickstart: provides a local Soroban test network with:
+  # - Standalone Horizon instance (http://stellar:8000)
+  # - Core instance for ledger management
+  # - Pre-funded test accounts
+  stellar:
+    image: stellar/quickstart:latest
+    container_name: vortex-soroban-testnet
+    environment:
+      # Run in standalone mode (no federation)
+      STANDALONE: "true"
+      # Enable RPC for Soroban smart contract invocation
+      ENABLE_SOROBAN_RPC: "true"
+    ports:
+      # Horizon API (REST, for balance queries, transaction submission)
+      - "8000:8000"
+      # Soroban RPC (JSON-RPC 2.0, for contract invocation)
+      - "8001:8001"
+    volumes:
+      # Persist ledger data across container restarts (optional)
+      - stellar-ledger:/opt/stellar/data
+
+volumes:
+  stellar-ledger:
+    driver: local
