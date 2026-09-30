@@ -1,15 +1,14 @@
-# vortex-contract
-
-**Soroban smart contracts for [Vortex Protocol](https://github.com/vortex-protocol) — intent-based cross-chain swaps settled on Stellar.**
-
-[![CI](https://github.com/vortex-protocol/vortex-contract/actions/workflows/ci.yml/badge.svg)](https://github.com/vortex-protocol/vortex-contract/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/vortex-protocol/vortex-contracts/branch/main/graph/badge.svg)](https://codecov.io/gh/vortex-protocol/vortex-contracts)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-
-This repository holds the on-chain logic that guarantees settlement: intent
-lifecycle, solver bonds, and slashing. Part of the multi-repo Vortex stack —
-see also [`vortex-backend`](https://github.com/vortex-protocol/vortex-backend)
 and [`vortex-frontend`](https://github.com/vortex-protocol/vortex-frontend).
+
+---
+
+## Security
+
+Please report vulnerabilities via [`SECURITY.md`](./SECURITY.md). A draft
+bug-bounty program, scoped to that document’s Assets at Risk table, lives
+in [`docs/bug-bounty-program.md`](./docs/bug-bounty-program.md). The
+program is unfunded (`REAL_MONEY=false`) until treasury infrastructure
+can pay rewards.
 
 ---
 
@@ -134,6 +133,31 @@ stellar contract invoke --id <CONTRACT_ID> --source <ANY_SECRET_KEY> --network t
 stellar contract invoke --id <CONTRACT_ID> --source <ANY_SECRET_KEY> --network testnet -- \
   get_stats
 ```
+
+##### CLI Helper Script
+
+To reduce boilerplate when invoking the contract during local testing, use the
+CLI helper script at `scripts/invoke.sh`. It wraps the Stellar CLI invocations
+above and reads common parameters from environment variables or a config file:
+
+```bash
+# Copy the example config and fill in your values
+cp scripts/.env.local.example .env.local
+# Edit .env.local with your CONTRACT_ID, SECRET_KEY, and NETWORK
+
+# Now invoke commands via the helper (no need to repeat contract ID or key)
+./scripts/invoke.sh register_solver --solver <SOLVER_ADDRESS> --bond_amount 500000000
+./scripts/invoke.sh submit_intent --user <USER_ADDRESS> --src_chain ethereum \
+  --src_token '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' \
+  --src_amount 1000000000000000000 --dst_token <USDC_SAC_ADDRESS> \
+  --min_dst_amount 35000000000
+./scripts/invoke.sh accept_intent --solver <SOLVER_ADDRESS> --intent_id <INTENT_ID>
+./scripts/invoke.sh fill_intent --solver <SOLVER_ADDRESS> --intent_id <INTENT_ID> \
+  --fill_amount 35000000000
+./scripts/invoke.sh get_stats
+```
+
+See `./scripts/invoke.sh --help` for the full list of supported commands.
 
 #### Decimal Normalization for `src_amount`
 

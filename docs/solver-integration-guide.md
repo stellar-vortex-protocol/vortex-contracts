@@ -490,3 +490,36 @@ MAIN LOOP (each new ledger)
         ├── bond_amount check    →  alert if < 2 × MIN_BOND
         └── is_paused?           →  alert if true unexpectedly
 ```
+
+---
+
+## Runnable Reference Implementation
+
+For a concrete demonstration of the full operational loop, see
+[`examples/reference-solver-bot.js`](../examples/reference-solver-bot.js).
+
+The reference implementation shows:
+- Startup eligibility checks via `is_solver_eligible()`
+- Polling for open intents via `list_open_intents()`
+- Accepting an intent via `accept_intent()`
+- Filling an intent via `fill_intent()`
+
+Usage:
+
+```bash
+export VORTEX_CONTRACT_ID=<CONTRACT_ID>
+export SOLVER_ADDRESS=<SOLVER_ADDRESS>
+export SOLVER_SECRET_KEY=<SOLVER_SECRET_KEY>
+export HORIZON_URL=https://horizon-testnet.stellar.org
+
+node examples/reference-solver-bot.js
+```
+
+**Note:** This example is simplified for educational purposes. Production
+solvers should implement:
+- Event streaming instead of polling
+- Multi-chain liquidity management
+- Comprehensive error handling and retry logic
+- Bond health monitoring and rebalancing
+- Dispute resolution handling
+- Rate limiting and backpressure management

@@ -1,7 +1,10 @@
-# Security Policy — `vortex-contracts`
+# Bug bounty
 
-> For general vulnerability reporting instructions, see the org-level
-> [SECURITY.md](https://github.com/vortex-protocol/.github/blob/main/SECURITY.md).
+A draft program — in-scope assets, severity tiers, and (unfunded) reward
+bands — is published in
+[`docs/bug-bounty-program.md`](docs/bug-bounty-program.md). It is scoped
+to the Assets at Risk table, Trust Assumptions, and the admin-key
+blast-radius table in this file.
 
 ---
 
@@ -288,3 +291,7 @@ accepted intents never lack the collateral that was promised at accept-time.
 Please do **not** open a public GitHub issue for security vulnerabilities.
 Follow the responsible-disclosure process described in the org-level
 [SECURITY.md](https://github.com/vortex-protocol/.github/blob/main/SECURITY.md).
+
+`REAL_MONEY=false`. No payout is authorized until treasury infrastructure
+is funded. Responsible disclosure still follows the process in this
+document.
