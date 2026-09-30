@@ -1,0 +1,52 @@
+version: 2
+
+# Dependabot configuration for automated dependency-update PRs.
+# Configures automated updates for Cargo dependencies and GitHub Actions versions.
+# See https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/about-dependabot-version-updates
+
+updates:
+  # Cargo dependencies in intent_settlement/
+  - package-ecosystem: cargo
+    directory: /intent_settlement
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+    allow:
+      # Allow dependency updates
+      - dependency-type: all
+    open-pull-requests-limit: 10
+    # Group minor/patch updates to reduce noise; keep major versions separate for careful review
+    groups:
+      minor-and-patch:
+        dependency-type: minor
+      major-updates:
+        dependency-type: major
+
+  # Cargo dependencies in proof_registry/
+  - package-ecosystem: cargo
+    directory: /proof_registry
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:15"
+    allow:
+      - dependency-type: all
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        dependency-type: minor
+      major-updates:
+        dependency-type: major
+
+  # GitHub Actions versions in .github/workflows/
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:30"
+    # Only allow patch updates for actions; major version bumps are reviewed manually
+    allow:
+      - dependency-type: patch
+    open-pull-requests-limit: 5

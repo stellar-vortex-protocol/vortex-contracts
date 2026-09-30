@@ -1,15 +1,14 @@
-# vortex-contract
-
-**Soroban smart contracts for [Vortex Protocol](https://github.com/vortex-protocol) — intent-based cross-chain swaps settled on Stellar.**
-
-[![CI](https://github.com/vortex-protocol/vortex-contract/actions/workflows/ci.yml/badge.svg)](https://github.com/vortex-protocol/vortex-contract/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/vortex-protocol/vortex-contracts/branch/main/graph/badge.svg)](https://codecov.io/gh/vortex-protocol/vortex-contracts)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-
-This repository holds the on-chain logic that guarantees settlement: intent
-lifecycle, solver bonds, and slashing. Part of the multi-repo Vortex stack —
-see also [`vortex-backend`](https://github.com/vortex-protocol/vortex-backend)
 and [`vortex-frontend`](https://github.com/vortex-protocol/vortex-frontend).
+
+---
+
+## Security
+
+Please report vulnerabilities via [`SECURITY.md`](./SECURITY.md). A draft
+bug-bounty program, scoped to that document’s Assets at Risk table, lives
+in [`docs/bug-bounty-program.md`](./docs/bug-bounty-program.md). The
+program is unfunded (`REAL_MONEY=false`) until treasury infrastructure
+can pay rewards.
 
 ---
 
@@ -134,6 +133,31 @@ stellar contract invoke --id <CONTRACT_ID> --source <ANY_SECRET_KEY> --network t
 stellar contract invoke --id <CONTRACT_ID> --source <ANY_SECRET_KEY> --network testnet -- \
   get_stats
 ```
+
+##### CLI Helper Script
+
+To reduce boilerplate when invoking the contract during local testing, use the
+CLI helper script at `scripts/invoke.sh`. It wraps the Stellar CLI invocations
+above and reads common parameters from environment variables or a config file:
+
+```bash
+# Copy the example config and fill in your values
+cp scripts/.env.local.example .env.local
+# Edit .env.local with your CONTRACT_ID, SECRET_KEY, and NETWORK
+
+# Now invoke commands via the helper (no need to repeat contract ID or key)
+./scripts/invoke.sh register_solver --solver <SOLVER_ADDRESS> --bond_amount 500000000
+./scripts/invoke.sh submit_intent --user <USER_ADDRESS> --src_chain ethereum \
+  --src_token '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' \
+  --src_amount 1000000000000000000 --dst_token <USDC_SAC_ADDRESS> \
+  --min_dst_amount 35000000000
+./scripts/invoke.sh accept_intent --solver <SOLVER_ADDRESS> --intent_id <INTENT_ID>
+./scripts/invoke.sh fill_intent --solver <SOLVER_ADDRESS> --intent_id <INTENT_ID> \
+  --fill_amount 35000000000
+./scripts/invoke.sh get_stats
+```
+
+See `./scripts/invoke.sh --help` for the full list of supported commands.
 
 #### Decimal Normalization for `src_amount`
 
@@ -509,6 +533,9 @@ To report a vulnerability, see the org
 For the detailed threat model specific to `intent_settlement`, see
 [SECURITY.md](./SECURITY.md) in this repository.
 
+**Admin and fee-recipient custody:** See [`docs/custody-transparency.md`](./docs/custody-transparency.md)
+for the current custody model and key holders (updated operationally whenever keys rotate).
+
 ---
 
 ## Intent ID Derivation
@@ -548,11 +575,9 @@ def compute_intent_id(user_address: str, src_chain: str, src_amount: int, timest
 
 ## Roadmap
 
-- [x] **Contract test suite** — `soroban_sdk` testutils coverage for the full intent
-      lifecycle, solver bonding/slashing, admin controls, pause, and storage TTL
-      management
-- [~] **Solver registry contract** — tier lookup + perk schedule shipped and wired into `accept_intent` / `slash_solver` (#197); score-gated promotion, staking, reputation NFT, dispute resolution still to do (#186)
-- [ ] **Cross-chain proof verification** — verify source-chain tx on-chain via Stellar oracle / messaging infra
+For a comprehensive, thematic view of the protocol's forward-looking work—cross-chain proof verification, solver reputation infrastructure, community governance, observability, and more—see the public [**ROADMAP.md**](./ROADMAP.md).
+
+That document consolidates scattered follow-up notes and roadmap items from design docs and `SECURITY.md` into a single, community-visible view organized by theme and status (in progress, not started, under research, shipped, out of scope for v1).
 
 ---
 
@@ -571,6 +596,24 @@ discussion and deliberation process that precedes the on-chain 48-hour timelock.
 
 For org-wide policies, see the
 [org-wide CONTRIBUTING.md](https://github.com/vortex-protocol/.github/blob/main/CONTRIBUTING.md).
+
+## Ecosystem & Grants
+
+The Vortex ecosystem grows through community-built tooling. We maintain a collection
+of **reference implementations** in this repository (`indexer/reference-indexer.js`,
+`examples/risk_aware_solver_bot.py`) intended as starting points for external contributors.
+
+### Building on Vortex
+
+Interested in building indexers, monitoring dashboards, integration libraries, or solver
+infrastructure? See the [Ecosystem Grants Program](./docs/ecosystem-grants-program.md)
+for how to get funding support once the protocol treasury governance process (issue #117)
+is adopted.
+
+Current ecosystem tooling examples:
+- `indexer/reference-indexer.js` — reference intent indexer (extend to production service)
+- `examples/risk_aware_solver_bot.py` — reference solver bot implementation
+- `solver_registry/` contract — solver reputation and tier management
 
 ## License
 

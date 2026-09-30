@@ -1,0 +1,26 @@
+{
+  "name": "@vortex-protocol/types",
+  "version": "0.1.0",
+  "description": "TypeScript type definitions for Vortex Protocol smart contracts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "check-drift": "node scripts/check-drift.js"
+  },
+  "keywords": [
+    "vortex",
+    "stellar",
+    "soroban",
+    "types",
+    "intent-settlement"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

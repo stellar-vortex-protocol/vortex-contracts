@@ -23,7 +23,25 @@ the org-wide
 
 ## Toolchain Setup
 
-### Rust
+### Quick start via devcontainer (recommended for new contributors)
+
+If you have [Docker](https://docs.docker.com/get-docker/) and [VS Code](https://code.visualstudio.com/) installed:
+
+1. Install the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) for VS Code
+2. Clone this repository
+3. Open it in VS Code, then run the **Dev Containers: Reopen in Container** command (Ctrl+Shift+P / Cmd+Shift+P)
+4. VS Code will build the devcontainer and install all dependencies automatically
+5. Once ready, run `make all` or `just all` in the terminal to verify the build
+
+This approach ensures a reproducible setup matching the pinned Rust 1.78 toolchain used in CI, with zero manual configuration steps.
+
+Alternatively, use GitHub Codespaces: click the green "Code" button → "Codespaces" tab → "Create codespace on main". The devcontainer will bootstrap automatically.
+
+### Manual setup (Rust, wasm32 target, Stellar CLI, cargo-audit)
+
+If you prefer not to use devcontainers, follow these steps manually:
+
+#### Rust
 
 Install Rust via [rustup](https://rustup.rs/):
 
@@ -160,6 +178,27 @@ When adding a new entrypoint or changing existing behavior, add or update a test
 that exercises the new code path. PRs that change logic without a corresponding
 test change will be asked to add coverage.
 
+### Property-based testing (proptest)
+
+Long-running property-based tests use [`proptest`](https://crates.io/crates/proptest) to explore random sequences
+of operations and verify invariants:
+
+- `proptest_bond.rs` — Bond conservation and lifecycle invariants
+- `proptest_fill.rs` — Fill conservation and ordering invariants
+
+These tests run with a low case count (256) in PR CI to keep iteration time under
+control. A nightly scheduled job (`.github/workflows/nightly-fuzz.yml`) runs them
+with a higher case count (10000) to catch regressions that only appear after many
+interleavings.
+
+If a proptest run fails, the failure is shrunk to a minimal reproduction sequence
+and saved to `.proptest-regressions/`. To confirm the fix, run the test locally
+or replay the same PROPTEST_RNG seed:
+
+```bash
+PROPTEST_RNG=<seed> cargo test --features testutils -- <test_name>
+```
+
 ---
 
 ## Linting and Formatting
@@ -196,6 +235,54 @@ run `cargo audit` before pushing.
 
 When upgrading a dependency to resolve an advisory, note the advisory ID in
 the CHANGELOG entry.
+
+### Automated Dependency Updates with Dependabot
+
+Dependabot is configured to automatically open PRs for dependency updates in both
+`intent_settlement/` and `proof_registry/`, plus GitHub Actions versions in
+`.github/workflows/`. See [`.github/dependabot.yml`](.github/dependabot.yml).
+
+**Dependabot PR Review Policy:** Every dependency-update PR from Dependabot must pass
+the same CI gates as any manually-submitted PR — `fmt`, `clippy`, `test`, `build`,
+and `audit`. There is no special fast-track or auto-merge for Dependabot PRs; each
+one is reviewed with full scrutiny.
+
+**Edge Case — `#![no_std]` Compatibility:** When reviewing a Dependabot PR that
+bumps a dependency, re-verify that the new version does not transitively pull in
+`std` (which would violate the contract's `#![no_std]` requirement). If a Dependabot
+PR introduces a transitive `std` dependency, reject and close it; request a different
+version or file an issue with the upstream maintainer.
+
+### Secrets Scanning
+
+Every commit and pull request is scanned for accidentally-committed secrets
+(Stellar secret keys, API tokens, credentials, etc.) using
+[gitleaks](https://github.com/gitleaks/gitleaks). The scan runs automatically
+in the `secrets-scan` CI job and is configured by [`.gitleaks.toml`](.gitleaks.toml).
+
+**If the secrets-scan job fails on your PR:**
+
+1. **Do not push again without remedying the issue.** A committed secret is
+   compromised by virtue of being in git history — even if you delete it in a
+   follow-up commit, it remains in the repository's git history.
+2. Identify what was scanned and flagged:
+   - Check the job's output for the exact rule name and line number.
+   - Confirm whether it's a real secret or a false positive (e.g., a placeholder
+     value from `deploy-testnet.env.example`).
+3. **If it's a real secret:**
+   - **Revoke the secret immediately** (rotate the key, invalidate the token, etc.).
+   - Rewrite the git history to remove the secret from all commits
+     (use `git filter-branch` or a tool like `git-filter-repo`).
+   - Force-push the corrected history to your branch.
+4. **If it's a false positive:**
+   - Add the pattern to the `allowlist` in [`.gitleaks.toml`](.gitleaks.toml)
+     if it is a legitimate placeholder or non-secret pattern that should never
+     trigger the scan (e.g., example addresses from documentation).
+   - Re-commit and push.
+
+**Example false positive:** The placeholder secret key
+`SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` in
+`deploy-testnet.env.example` is allowlisted and will not trigger the scan.
 
 ---
 
@@ -411,6 +498,8 @@ configuration correct as the workflow grows.
 | `Contract (stable)` | `ci.yml` / `contract` matrix leg | ✅ Yes |
 | `Contract (1.78)` | `ci.yml` / `contract` matrix leg | ✅ Yes |
 | `Dependency audit` | `ci.yml` / `audit` | ✅ Yes |
+| `Code coverage` | `ci.yml` / `coverage` | ❌ No (advisory) |
+| `Resource cost drift detection` | `ci.yml` / `resource-cost-drift` | ❌ No (advisory) |
 
 > **Note:** Matrix jobs are reported to GitHub as `<job.name> (<matrix value>)`.
 > The exact strings you must enter in the branch-protection UI are
@@ -475,7 +564,6 @@ once they are merged:
 | Job name | Workflow | Notes |
 |---|---|---|
 | `WASM size gate` | `ci.yml` (planned) | Blocks merges that grow the wasm by > N KB |
-| `Coverage` | `coverage.yml` (planned) | Advisory until a baseline is established |
 
 ### GITHUB_TOKEN permission model
 
@@ -500,6 +588,8 @@ needs.
 | `proptest` | Checkout + `cargo test` | `contents: read` |
 | `audit` | Checkout + `cargo audit` (queries RustSec DB over HTTPS, not the GitHub API) | `contents: read` |
 | `mutants` | Checkout + `cargo mutants` (mutates source in a runner-local temp copy) | `contents: read` |
+| `coverage` | Checkout + `cargo llvm-cov` + upload to Codecov via HTTPS (not GitHub API) | `contents: read` |
+| `resource-cost-drift` | Checkout + run `scripts/check-resource-cost-drift.sh` (runs benchmarks and diffs markdown) | `contents: read` |
 
 **Adding a job that needs elevated scope:**
 
