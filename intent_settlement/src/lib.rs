@@ -780,6 +780,11 @@ impl IntentSettlement {
         // admin. require_auth_for_args is not needed because there are no
         // separate per-argument capabilities to scope — the signer IS the admin.
         admin.require_auth();
+        // Probe the SEP-41 interface: if `bond_token` isn't a real token contract
+        // this will trap and revert the transaction before we store anything.
+        let token_client = token::Client::new(&env, &bond_token);
+        // decimals() is a pure view with no side-effects; we discard the value.
+        let _decimals = token_client.decimals();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
@@ -1780,6 +1785,23 @@ impl IntentSettlement {
             .get(&DataKey::Solver(solver.clone()))
             .unwrap_or_else(|| panic_with_error!(&env, Error::SolverNotRegistered));
 
+        // Issue #270: Check that the solver has no active intents before allowing
+        // withdrawal. A solver with accepted intents cannot withdraw their bond,
+        // since the bond was sized to cover those obligations at accept-time.
+        //
+        // This is a conservative, fail-safe bound. Ideally (Issue #60), we'd track
+        // the minimum bond required per accepted intent and compute the precise
+        // floor across all of the solver's current obligations. For now, we match
+        // `deregister_solver`'s stricter all-or-nothing precedent: zero active
+        // intents required, no exceptions.
+        //
+        // Trade-off: a solver who accepts an intent but immediately regrets it
+        // must wait for that intent to be slashed or expire before they can
+        // withdraw. This is correct behaviour — it prevents gaming the bond floor.
+        if record.active_intents > 0 {
+            panic_with_error!(&env, Error::SolverHasActiveIntents);
+        }
+
         let current = Self::get_solver_bond_amount(&env, &record, &bond_token);
         if amount > current {
             panic_with_error!(&env, Error::InsufficientBond);
@@ -2238,6 +2260,10 @@ impl IntentSettlement {
 
         if fill_amount <= 0 {
             panic_with_error!(&env, Error::ZeroAmount);
+        }
+
+        if fill_amount > MAX_AMOUNT {
+            panic_with_error!(&env, Error::AmountTooLarge);
         }
 
         // ── Proof gate (issue #190) ─────────────────────────────────────────
@@ -4044,9 +4070,12 @@ impl IntentSettlement {
             .get::<_, SolverRecord>(&DataKey::Solver(solver))
         {
             Some(record) => {
+                let now = env.ledger().timestamp();
+                let cooldown_remaining = Self::slash_cooldown_remaining(record.last_slash_time, now);
                 record.is_active
                     && record.bond_amount >= cfg.min_bond
                     && record.active_intents < cfg.max_active_intents_per_solver
+                    && cooldown_remaining == 0
             }
             None => false,
         }

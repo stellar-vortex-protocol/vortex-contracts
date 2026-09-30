@@ -2,7 +2,8 @@
 
 **Issue:** [#110](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/110)
 **Branch:** `feat/ops-monitoring-and-health-check`
-**Status:** Design complete — spec ready for ops tooling implementation
+**Status:** ✅ Implementation complete — monitoring tool deployed at [`monitoring/vortex-monitor.js`](../monitoring/vortex-monitor.js)
+**Implementation Issue:** [#289](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/289)
 
 ---
 

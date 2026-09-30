@@ -30,6 +30,7 @@ yarn.lock
 .env
 .env.*
 !.env.example
+!.env.local.example
 
 # Stellar CLI artifacts
 .soroban/

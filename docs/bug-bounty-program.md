@@ -1,4 +1,9 @@
-# Bug Bounty Program
+# Vortex Contracts — Bug Bounty Program
+
+> **Status:** Draft / unfunded. No treasury payouts are authorized.
+> `REAL_MONEY=false` until treasury infrastructure (see issue #37) can
+> settle rewards. Platform listing (Immunefi, HackenProof, or similar) is
+> a separate business decision and is out of scope for this document.
 
 **Tracking issue:** [#298](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/298)
 
@@ -10,15 +15,59 @@ This document defines the Vortex Protocol's security bug bounty program, scope, 
 
 The Vortex Protocol handles real economic value: solver bonds (≥ 50 USDC per solver), unbounded user swap output, protocol fees (0.05% of filled volume), and admin privileges with griefing-and-fee-theft capability. This bug bounty program incentivizes external security researchers to identify and responsibly disclose vulnerabilities before they can affect mainnet users and solvers.
 
-**Scope:** Vortex Protocol smart contracts on Stellar, as deployed to mainnet. This program covers the `intent_settlement` contract and the `proof_registry` contract (when deployed per issue #190).
-
 **Eligibility:** Anyone may participate, except core team members and auditors of record (see Conflict of Interest, below).
 
 ---
 
-## Severity Tiers and Reward Structure
+## 1. Scope
+
+### 1.1 In scope
+
+- Soroban contracts under `contracts/` at the **pinned audit commit or
+  release tag** named by `docs/pre-deploy-security-checklist.md`.
+- Only findings against that frozen tag qualify for a reward. Findings
+  against `main` after the freeze are informational unless they still
+  reproduce on the frozen tag.
+- Impact must land on an asset in the Assets at Risk table (solver bonds,
+  user swap output, protocol fees, or admin privileges beyond the
+  documented blast radius).
+- This program covers the `intent_settlement` contract and the `proof_registry` contract (when deployed per issue #190).
+
+### 1.2 Out of scope
+
+- Issues already recorded in `SECURITY.md` **Known Limitations**, or any
+  open Security & Auditing issue. Duplicates are not eligible for a
+  reward (contribution credit only, at maintainer discretion).
+- `vortex-backend`, `vortex-frontend`, DNS, CI secrets, dependency CVE
+  intake with no contract exploit path, and social engineering.
+- Scenarios that assume a compromised admin key **within** the blast
+  radius documented in `SECURITY.md` (“What a compromised admin key can
+  and cannot do”). Escalation *beyond* that table may qualify.
+- Theoretical style / best-practice notes with no concrete exploit path
+  and no effect on an in-scope asset.
+- Testnet-only behaviour that does not reproduce on the frozen tag.
+
+---
+
+## 2. Severity tiers (Assets at Risk)
+
+Source assets (see `SECURITY.md`): solver bonds (≥ `MIN_BOND`, currently
+50 USDC per solver), user swap output (unbounded), protocol fees, admin
+privileges. Trust Assumptions §1–5 still apply.
 
 Severity is determined by the maximum plausible economic impact and blast radius, mapped directly to `SECURITY.md`'s Assets at Risk table.
+
+| Severity | Definition | Example |
+|---|---|---|
+| Critical | Direct theft or unauthorized drain of solver bonds or user swap output; diversion of protocol fees to an attacker. | Steal bonded USDC via unauthorized `slash_solver` / withdraw; `compute_intent_id` collision (issue #82) if shown to redirect `dst_token` output to the attacker. |
+| High | Permanent freeze or lockup of in-scope funds; bypass of bond slashing; admin escalation beyond the documented can/cannot table. | Overflow (issue #84) if shown to brick settlement or lock bonds; privilege change that grants an unlisted mint or withdraw. |
+| Medium | Bounded griefing or DoS inside the documented admin blast radius; bounded fee manipulation; oracle / slippage loss with a cap. | `compute_intent_id` collision that only reverts (no theft); griefing `accept_intent` so the fill window (`FILL_WINDOW`, currently 300s) expires and the intent is retried. |
+| Low / Informational | Non-exploitable deviation, missing events, gas griefing, hardening notes. | Unchecked return with no fund impact; lint-only findings. |
+
+Rubric: **impact × exploitability**. A report needs a PoC (unit/integration
+test or a transaction trace against the frozen tag). Maintainers will
+sanity-check open items such as #82 and #84 against this table; those
+issues are **not** paid as-is.
 
 ### Critical — Impact on core protocol assets
 
@@ -34,11 +83,6 @@ Severity is determined by the maximum plausible economic impact and blast radius
 - Access control bypass allowing non-admin callers to invoke `pause`, `transfer_admin`, or `set_fee_recipient`
 - Cryptographic collision in `compute_intent_id` enabling intent substitution or replay (#82, had this been exploitable)
 
-**Reward:** $25,000 – $50,000 USD equivalent (or USDC) per finding
-- $50,000 for findings requiring minimal additional conditions to trigger
-- $30,000 – $50,000 for findings requiring specific solver/user coordination but no code changes
-- $25,000 – $30,000 for findings that require a contract upgrade to fully patch but pose immediate risk
-
 **How to verify:** A working exploit demonstrating the impact on a testnet instance, with documentation of the attack's preconditions.
 
 ### High — Direct impact to a single user/solver or temporary protocol halt
@@ -53,11 +97,6 @@ Severity is determined by the maximum plausible economic impact and blast radius
 - TTL/deadline off-by-one enabling unintended expiry or fill window extension
 - Event emission omission breaking off-chain monitoring that ops relies on for incident response
 - DoS in `slash_solver` or `expire_intent` allowing a specific intent to block all subsequent calls
-
-**Reward:** $5,000 – $15,000 USD equivalent (or USDC) per finding
-- $15,000 for findings affecting a broad class of users/solvers (e.g., all solvers above a bond threshold)
-- $7,500 – $15,000 for findings affecting a specific address or intent
-- $5,000 – $7,500 for findings that require a multi-step setup or existing state corruption
 
 **How to verify:** A testnet reproduction showing the specific impact (e.g., a solver unable to fill, an intent stuck past expiry, an admin action failing).
 
@@ -75,11 +114,6 @@ Severity is determined by the maximum plausible economic impact and blast radius
 - Inconsistent validation between `accept_intent` and `fill_intent` on deadline semantics, violating the documented off-by-one consistency
 - A Proof Registry integration (issue #190) that claims to verify source-chain deposits but actually accepts fabricated proofs
 
-**Reward:** $500 – $2,000 USD equivalent (or USDC) per finding
-- $2,000 for findings that narrow the documented trust assumptions in a new way
-- $1,000 – $2,000 for medium-severity information disclosures
-- $500 – $1,000 for documented-but-fragile design choices (e.g., lack of event for a state transition)
-
 **How to verify:** Documentation of the specific inconsistency or griefing path, with a testnet demonstration if applicable.
 
 ### Low — Minor inefficiencies, typos, or best-practice deviations
@@ -92,7 +126,69 @@ Severity is determined by the maximum plausible economic impact and blast radius
 - Deviation from Soroban or Stellar best practices that doesn't enable an attack but could in a future contract version
 - Missing rustdoc on public functions
 
-**Reward:** $0 – $250 USD equivalent (or acknowledgment in CHANGELOG)
+---
+
+## 3. Rewards
+
+Pending treasury funding (issue #37), rewards are **tier-ordered
+commitments**, not dollar promises:
+
+| Tier | Band (proposed, pending funding) |
+|---|---|
+| Critical | Tier 1 (highest) |
+| High | Tier 2 |
+| Medium | Tier 3 |
+| Low / Informational | Tier 4 (recognition / thanks) |
+
+- Final amounts will be written into this document when
+  `REAL_MONEY` is set to `true`. Nothing in this draft authorizes a
+  payout.
+- Severity is assigned by maintainers using §2. Disputes get a second
+  reviewer who must cite the Assets at Risk table and Trust Assumptions
+  in `SECURITY.md`.
+- One reward per root cause. The first valid report wins; later
+  duplicates are closed.
+
+---
+
+## 4. Rules
+
+- **Novelty.** The finding must not already be a Known Limitation or an
+  open issue. A PR that restates a tracked bug does not earn a bounty.
+- **No mainnet harm.** Do not extract funds, hold intents or bonds
+  hostage, or publicly disclose before a fix plus a 30-day embargo
+  (or earlier maintainer approval).
+- **Disclosure path.** Follow the reporting process in
+  [`SECURITY.md`](../SECURITY.md). Do not file a public issue for an
+  unfixed in-scope vulnerability.
+- **Safe harbor.** Good-faith research that stays in scope, does not
+  steal or extort, and does not violate privacy will not be referred
+  for legal action by the maintainers. This is not legal advice and is
+  pending legal review.
+- **SLA (target, not a contract).** Triage acknowledgement within 5
+  business days; severity assignment within 15 business days.
+
+---
+
+## 5. Submission template
+
+1. Affected contract, frozen tag/commit, and function.
+2. Asset impacted (row in the Assets at Risk table) and Trust Assumption
+   violated, if any.
+3. PoC (test or trace) against the frozen tag.
+4. Impact write-up and proposed severity from §2.
+5. Duplicate check: Known Limitations and open Security issues searched
+   (list issue numbers).
+
+---
+
+## 6. Activation
+
+The program **activates** at the mainnet-deploy freeze described in
+`docs/pre-deploy-security-checklist.md` and
+`docs/mainnet-deployment-runbook.md`. Until that freeze, reports are
+still welcome under `SECURITY.md` but are informational unless they are
+re-validated on the frozen tag after activation.
 
 ---
 
