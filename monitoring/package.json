@@ -1,0 +1,30 @@
+{
+  "name": "vortex-monitoring",
+  "version": "1.0.0",
+  "description": "Ops monitoring & alerting tool for vortex-intent-settlement contract",
+  "main": "vortex-monitor.js",
+  "type": "module",
+  "bin": {
+    "vortex-monitor": "./vortex-monitor.js"
+  },
+  "scripts": {
+    "start": "node vortex-monitor.js",
+    "test": "node vortex-monitor.test.js"
+  },
+  "keywords": [
+    "vortex",
+    "monitoring",
+    "alerting",
+    "soroban",
+    "stellar"
+  ],
+  "author": "Vortex Protocol",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stellar-vortex-protocol/vortex-contracts.git"
+  }
+}

@@ -1,0 +1,28 @@
+[workspace]
+members = [
+  "vortex-common",
+  "intent_settlement",
+  "solver_registry",
+  "proof_registry",
+  "reputation_badge",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace.dependencies]
+soroban-sdk = { version = "21.0.0" }
+proptest = { version = "1.5.0", default-features = false, features = ["std"] }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

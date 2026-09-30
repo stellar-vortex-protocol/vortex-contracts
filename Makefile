@@ -71,6 +71,28 @@ endif
 		--source $(STELLAR_SOURCE) \
 		--network $(STELLAR_NETWORK)
 
+# ── Local integration testing ────────────────────────────────────────────────
+
+.PHONY: local-network-start
+local-network-start:  ## Start local Soroban test network via docker-compose
+	./setup-local-network.sh start
+
+.PHONY: local-network-stop
+local-network-stop:  ## Stop local Soroban test network
+	./setup-local-network.sh stop
+
+.PHONY: local-network-clean
+local-network-clean:  ## Clean and remove local network volumes (destructive)
+	./setup-local-network.sh clean
+
+.PHONY: local-network-logs
+local-network-logs:  ## Tail local network logs
+	./setup-local-network.sh logs
+
+.PHONY: local-network-status
+local-network-status:  ## Check local network status
+	./setup-local-network.sh status
+
 # ── Help ──────────────────────────────────────────────────────────────────────
 
 .PHONY: help

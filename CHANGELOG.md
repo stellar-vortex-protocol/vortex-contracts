@@ -9,6 +9,32 @@ first deploys to mainnet.
 
 ## [Unreleased]
 
+### Added
+
+- **CI: Enforce CHANGELOG.md updates (issue #294).** A new CI job verifies that
+  every PR changing `intent_settlement/src/` or `proof_registry/src/` includes a
+  corresponding update to `CHANGELOG.md`. An escape hatch (`no-changelog-needed`
+  label) exists for genuinely changelog-exempt changes (pure test-only, 
+  comment-only, CI/tooling).
+- **CI: Soroban standalone network integration test (issue #295).** A new CI job
+  runs a full end-to-end lifecycle test (`register_solver` → `submit_intent` →
+  `accept_intent` → `fill_intent`) against a local Soroban standalone network on
+  every PR. Exercises the real deployment, contract initialization, and CLI-invocation
+  path — catching issues that in-process unit tests miss. Includes a local test
+  script (`scripts/e2e-test.sh`) for debugging; documented in `CONTRIBUTING.md`.
+- **`.github/CODEOWNERS` file establishing review routing (issue #296).** Maps
+  major repository areas (`intent_settlement/`, `proof_registry/`, `solver_registry/`,
+  `indexer/`, `docs/`, `.github/workflows/`, etc.) to code owners/teams. PRs
+  automatically request review from owners with relevant expertise. Documented
+  process for contributors to become owners in `CONTRIBUTING.md`.
+- **Formalized off-chain governance process (issue #297).** New `GOVERNANCE.md`
+  documents the RFC and discussion process preceding on-chain proposals. Establishes
+  minimum 3-business-day discussion window before `propose_*` calls; describes what
+  requires a proposal (fee changes, admin transfers, upgrades, token allowlist changes),
+  emergency exception for `pause()`, and rollback planning. Includes GitHub issue
+  template for proposals (`.github/ISSUE_TEMPLATE/governance-proposal.md`). Referenced
+  from `CONTRIBUTING.md` and `README.md`.
+
 ### Changed
 
 - **Storage layout — `SolverRecord` / `IntentRecord` (issue #187, #188).**
