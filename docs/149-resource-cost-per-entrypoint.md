@@ -19,6 +19,14 @@ changes (resource costs drift as the code does).
 
 ## 2. Methodology
 
+**Drift Detection:** A CI job (`resource-cost-drift`) runs on every PR and
+compares this document's baseline against freshly-generated measurements. If
+any entrypoint's cost has drifted beyond ±10%, the check flags it (non-blocking
+for now). After confirming the change is expected (e.g., intentional optimization
+or necessary feature), re-run the bench harness and update this table. The CI
+job will then pass on re-run. See section "Regenerate with:" below for the
+command.
+
 The numbers come from `intent_settlement/src/bench.rs`, a `#[cfg(test)]`
 harness that:
 

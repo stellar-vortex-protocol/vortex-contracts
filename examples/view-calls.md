@@ -4,20 +4,43 @@
 `simulateTransaction` request for every read-only view in
 `intent_settlement/src/lib.rs`:
 
-- `get_protocol_params`
-- `get_intent`
-- `get_solver`
-- `get_reputation_score`
-- `is_solver_eligible`
-- `get_fee_recipient`
-- `get_pending_fee_recipient`
-- `get_bond_token`
 - `get_admin`
-- `get_stats`
-- `get_min_bond`
-- `list_intents_by_user`
-- `get_solver_count`
+- `get_arbiter`
+- `get_best_bid`
+- `get_bond_token`
+- `get_bond_token_min`
+- `get_config`
+- `get_effective_intent_state`
+- `get_fee_recipient`
+- `get_intent`
+- `get_max_active_intents_per_solver`
+- `get_min_bond_multiplier`
+- `get_pauser`
+- `get_pending_admin`
+- `get_pending_fee_recipient`
+- `get_pending_upgrade`
+- `get_proof_registry`
 - `get_protocol_health`
+- `get_reputation_score`
+- `get_solver`
+- `get_solver_bond`
+- `get_solver_bonds`
+- `get_solver_count`
+- `get_solver_intents`
+- `get_solver_routes`
+- `get_stats`
+- `get_token_stats`
+- `is_allowed_bond_token`
+- `is_bid_window_enabled`
+- `is_dst_allowlist_enabled`
+- `is_dst_token_allowed`
+- `is_paused`
+- `is_solver_eligible`
+- `is_src_chain_allowed`
+- `is_src_chain_allowlist_enabled`
+- `list_allowed_dst_tokens`
+- `list_intents_by_user`
+- `list_solvers`
 
 ## Import
 

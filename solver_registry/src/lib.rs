@@ -21,8 +21,8 @@
 //! test module is the shared cross-check.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, BytesN,
+    Env, Symbol, Vec,
 };
 
 #[cfg(test)]
@@ -83,6 +83,10 @@ const INSTANCE_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS * 60;
 /// `intent_settlement`'s `ADMIN_TIMELOCK_DELAY`.
 pub const ADMIN_TIMELOCK_DELAY: u64 = 172_800; // 48 hours
 
+/// Delay between `propose_writer` and `execute_writer` (issue #389). Matches
+/// `intent_settlement`'s `ADMIN_TIMELOCK_DELAY`.
+pub const WRITER_TIMELOCK_DELAY: u64 = 172_800; // 48 hours
+
 // ─── Storage ─────────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -100,12 +104,25 @@ pub enum DataKey {
     /// Instance: the settlement contract authorized to call `record_fill` /
     /// `record_failure` / `slash`. Absent until `set_writer`.
     Writer,
+    /// Instance: `(Address, u64)` writer rotation proposed by
+    /// `propose_writer` and the earliest timestamp `execute_writer` may run.
+    PendingWriter,
     /// Instance: `Vec<TierThreshold>` of length 5 — the effective tier table.
     Thresholds,
     /// Instance: registered-solver count (`u32`).
     TotalSolvers,
     /// Persistent: per-solver record.
     Solver(Address),
+    /// Persistent: presence means the write `action` (`fill`, `failure` or
+    /// `slash`) was already applied for `intent_id` (issue #390). Makes each
+    /// settlement write exactly-once per intent.
+    Recorded(Symbol, BytesN<32>),
+    /// Persistent: presence means `solver` holds an open obligation for
+    /// `intent_id` in settlement (issue #392). Keyed per intent so
+    /// `lock_obligation` / `release_obligation` are idempotent.
+    Obligation(Address, BytesN<32>),
+    /// Persistent: number of open obligations (`u32`) held by a solver.
+    OpenObligations(Address),
 }
 
 /// One row of the tunable part of the tier table.
@@ -174,12 +191,19 @@ pub enum Error {
     /// `record_fill` / `record_failure` / `slash` called before `set_writer`
     /// with a caller that is not the admin.
     WriterNotSet = 12,
-    // 13..=15 are claimed by open PRs #445 and #446; skipped so the codes
-    // never collide on merge.
+    /// `execute_writer` called before the rotation timelock elapsed.
+    TimelockNotElapsed = 13,
+    /// `execute_writer` / `cancel_writer` with no rotation pending.
+    NoPendingWriter = 14,
+    /// `set_writer` called once a writer exists; rotation goes through
+    /// `propose_writer` / `execute_writer`.
+    WriterAlreadySet = 15,
+    /// This write was already applied for this `intent_id` (issue #390).
+    AlreadyRecorded = 16,
     /// `accept_admin` called before the handover timelock elapsed.
-    AdminTimelockNotElapsed = 16,
+    AdminTimelockNotElapsed = 17,
     /// `accept_admin` / `cancel_admin_transfer` with no handover pending.
-    NoPendingAdminTransfer = 17,
+    NoPendingAdminTransfer = 18,
 }
 
 // ─── Reputation formula ──────────────────────────────────────────────────────
@@ -254,10 +278,16 @@ impl SolverRegistry {
 
     // ── Admin ────────────────────────────────────────────────────────────────
 
-    /// Admin-only: set (or rotate) the settlement contract permitted to call
-    /// `record_fill` / `record_failure` / `slash`.
+    /// Admin-only: set the **initial** settlement contract permitted to call
+    /// `record_fill` / `record_failure` / `slash`. Once a writer exists this
+    /// fails with `WriterAlreadySet`: rotating it goes through the timelocked
+    /// `propose_writer` / `execute_writer` flow, so a compromised admin key
+    /// can't silently swap in a writer that slashes every solver.
     pub fn set_writer(env: Env, writer: Address) {
         Self::require_admin(&env);
+        if env.storage().instance().has(&DataKey::Writer) {
+            panic_with_error!(&env, Error::WriterAlreadySet);
+        }
         env.storage().instance().set(&DataKey::Writer, &writer);
         Self::bump_instance_ttl(&env);
         env.events()
@@ -335,6 +365,63 @@ impl SolverRegistry {
     /// The configured settlement writer, if any.
     pub fn get_writer(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Writer)
+    }
+
+    /// Admin-only: propose rotating the writer to `new_writer`. A
+    /// `writer_proposed` event fires immediately for off-chain monitors, and
+    /// `execute_writer` may only run once `WRITER_TIMELOCK_DELAY` has elapsed.
+    /// A fresh proposal overwrites any pending one and resets the timelock.
+    pub fn propose_writer(env: Env, new_writer: Address) {
+        Self::require_admin(&env);
+        let eta = env.ledger().timestamp() + WRITER_TIMELOCK_DELAY;
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingWriter, &(new_writer.clone(), eta));
+        Self::bump_instance_ttl(&env);
+        env.events()
+            .publish((Symbol::new(&env, "writer_proposed"),), (new_writer, eta));
+    }
+
+    /// Admin-only: apply the pending writer rotation once its timelock has
+    /// elapsed. `new_writer` must match the proposal, so a stale or replaced
+    /// proposal can't be executed by mistake. Emits `writer_set`.
+    pub fn execute_writer(env: Env, new_writer: Address) {
+        Self::require_admin(&env);
+        let (pending, eta): (Address, u64) = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingWriter)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingWriter));
+        if pending != new_writer {
+            panic_with_error!(&env, Error::Unauthorized);
+        }
+        if env.ledger().timestamp() < eta {
+            panic_with_error!(&env, Error::TimelockNotElapsed);
+        }
+        env.storage().instance().remove(&DataKey::PendingWriter);
+        env.storage().instance().set(&DataKey::Writer, &new_writer);
+        Self::bump_instance_ttl(&env);
+        env.events()
+            .publish((Symbol::new(&env, "writer_set"),), new_writer);
+    }
+
+    /// Admin-only: discard the pending writer rotation. Fails with
+    /// `NoPendingWriter` if none is pending.
+    pub fn cancel_writer(env: Env) {
+        Self::require_admin(&env);
+        let (pending, _eta): (Address, u64) = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingWriter)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingWriter));
+        env.storage().instance().remove(&DataKey::PendingWriter);
+        env.events()
+            .publish((Symbol::new(&env, "writer_proposal_cancelled"),), pending);
+    }
+
+    /// The pending writer rotation, if any: `(new_writer, eta)`.
+    pub fn get_pending_writer(env: Env) -> Option<(Address, u64)> {
+        env.storage().instance().get(&DataKey::PendingWriter)
     }
 
     /// Admin-only: tune one tier's `min_bond` / `min_score_bps`.
@@ -534,14 +621,22 @@ impl SolverRegistry {
 
     // ── Settlement write path (writer or admin) ─────────────────────────────
 
-    /// Record a successful fill of `amount` (dst-token units) by `solver`.
-    /// `caller` must be the configured writer or the admin.
-    pub fn record_fill(env: Env, caller: Address, solver: Address, amount: i128) {
+    /// Record a successful fill of `amount` (dst-token units) by `solver`
+    /// for `intent_id`. `caller` must be the configured writer or the admin.
+    /// Exactly once per intent: a repeat fails with `AlreadyRecorded`.
+    pub fn record_fill(
+        env: Env,
+        caller: Address,
+        solver: Address,
+        intent_id: BytesN<32>,
+        amount: i128,
+    ) {
         Self::require_writer_or_admin(&env, &caller);
         if amount < 0 {
             panic_with_error!(&env, Error::ZeroAmount);
         }
         let mut record = Self::load_solver(&env, &solver);
+        Self::mark_recorded(&env, "fill", &intent_id);
         record.fills_completed += 1;
         record.total_volume += amount;
         env.storage()
@@ -554,11 +649,13 @@ impl SolverRegistry {
         );
     }
 
-    /// Record a failed fill by `solver` (no slash — that is `slash`).
-    /// `caller` must be the configured writer or the admin.
-    pub fn record_failure(env: Env, caller: Address, solver: Address) {
+    /// Record a failed fill by `solver` for `intent_id` (no slash — that is
+    /// `slash`). `caller` must be the configured writer or the admin.
+    /// Exactly once per intent: a repeat fails with `AlreadyRecorded`.
+    pub fn record_failure(env: Env, caller: Address, solver: Address, intent_id: BytesN<32>) {
         Self::require_writer_or_admin(&env, &caller);
         let mut record = Self::load_solver(&env, &solver);
+        Self::mark_recorded(&env, "failure", &intent_id);
         record.fills_failed += 1;
         env.storage()
             .persistent()
@@ -574,10 +671,12 @@ impl SolverRegistry {
     /// unit), transfer it to the fee recipient, and record a failed fill.
     ///
     /// Returns `(slash_amount, new_tier)`. `caller` must be the configured
-    /// writer or the admin.
-    pub fn slash(env: Env, caller: Address, solver: Address) -> (i128, u32) {
+    /// writer or the admin. Exactly once per `intent_id`: a repeat fails with
+    /// `AlreadyRecorded`, so a retry can't double-slash.
+    pub fn slash(env: Env, caller: Address, solver: Address, intent_id: BytesN<32>) -> (i128, u32) {
         Self::require_writer_or_admin(&env, &caller);
         let mut record = Self::load_solver(&env, &solver);
+        Self::mark_recorded(&env, "slash", &intent_id);
 
         let tier_before = Self::tier_of(&env, &record);
         let bps = SLASH_BPS[tier_before as usize] as i128;
@@ -617,7 +716,94 @@ impl SolverRegistry {
         (slash_amount, new_tier)
     }
 
+    // ── Obligation locks (writer only) ──────────────────────────────────────
+
+    /// Record that `solver` holds an open obligation for `intent_id` (called
+    /// by settlement when the solver accepts the intent). Idempotent per
+    /// intent: locking an intent that is already locked leaves the count
+    /// unchanged. Returns the solver's open-obligation count.
+    ///
+    /// `caller` must be the configured writer; unlike `record_fill`, the
+    /// admin cannot drive this path, so obligations only reflect real
+    /// settlement state.
+    pub fn lock_obligation(
+        env: Env,
+        caller: Address,
+        solver: Address,
+        intent_id: BytesN<32>,
+    ) -> u32 {
+        Self::require_writer(&env, &caller);
+        // Only registered solvers can accept intents.
+        Self::load_solver(&env, &solver);
+
+        let key = DataKey::Obligation(solver.clone(), intent_id.clone());
+        let mut count = Self::open_obligations(&env, &solver);
+        if env.storage().persistent().has(&key) {
+            return count;
+        }
+        count += 1;
+        env.storage().persistent().set(&key, &true);
+        Self::bump_persistent_ttl(&env, &key);
+        Self::store_open_obligations(&env, &solver, count);
+        env.events().publish(
+            (Symbol::new(&env, "obligation_locked"), solver),
+            (intent_id, count),
+        );
+        count
+    }
+
+    /// Clear `solver`'s obligation for `intent_id` (called by settlement on
+    /// fill, slash, or re-open). Idempotent per intent: releasing an intent
+    /// that is not locked leaves the count unchanged. Does not require the
+    /// solver to still be registered, so a stale lock can always be cleared.
+    /// Returns the solver's open-obligation count.
+    ///
+    /// `caller` must be the configured writer.
+    pub fn release_obligation(
+        env: Env,
+        caller: Address,
+        solver: Address,
+        intent_id: BytesN<32>,
+    ) -> u32 {
+        Self::require_writer(&env, &caller);
+
+        let key = DataKey::Obligation(solver.clone(), intent_id.clone());
+        let mut count = Self::open_obligations(&env, &solver);
+        if !env.storage().persistent().has(&key) {
+            return count;
+        }
+        env.storage().persistent().remove(&key);
+        count = count.saturating_sub(1);
+        Self::store_open_obligations(&env, &solver, count);
+        env.events().publish(
+            (Symbol::new(&env, "obligation_released"), solver),
+            (intent_id, count),
+        );
+        count
+    }
+
+    /// Number of open obligations `solver` holds in settlement (0 if none).
+    pub fn get_open_obligations(env: Env, solver: Address) -> u32 {
+        Self::open_obligations(&env, &solver)
+    }
+
+    /// `true` iff `solver` holds an open obligation for `intent_id`.
+    pub fn has_obligation(env: Env, solver: Address, intent_id: BytesN<32>) -> bool {
+        env.storage()
+            .persistent()
+            .has(&DataKey::Obligation(solver, intent_id))
+    }
+
     // ── Views ───────────────────────────────────────────────────────────────
+
+    /// `true` iff the write `action` (`fill`, `failure` or `slash`) was
+    /// already applied for `intent_id`, so settlement can check before
+    /// retrying.
+    pub fn is_intent_recorded(env: Env, action: Symbol, intent_id: BytesN<32>) -> bool {
+        env.storage()
+            .persistent()
+            .has(&DataKey::Recorded(action, intent_id))
+    }
 
     /// Current tier (0..=4) for `solver`. Unknown solver → 0.
     pub fn get_tier(env: Env, solver: Address) -> u32 {
@@ -795,6 +981,81 @@ impl SolverRegistry {
             }
         }
         caller.require_auth();
+    }
+
+    /// Claim the idempotency key for `action` on `intent_id`, failing with
+    /// `AlreadyRecorded` if that write was already applied. Keys are per
+    /// action, so e.g. `record_failure` and `slash` for the same intent are
+    /// independent writes.
+    fn mark_recorded(env: &Env, action: &str, intent_id: &BytesN<32>) {
+        let key = DataKey::Recorded(Symbol::new(env, action), intent_id.clone());
+        if env.storage().persistent().has(&key) {
+            panic_with_error!(env, Error::AlreadyRecorded);
+        }
+        env.storage().persistent().set(&key, &true);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
+    }
+
+    /// Strict writer check for the obligation path: the writer must be
+    /// configured and `caller` must be it (the admin is not accepted).
+    fn require_writer(env: &Env, caller: &Address) {
+        let writer: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Writer)
+            .unwrap_or_else(|| panic_with_error!(env, Error::WriterNotSet));
+        if *caller != writer {
+            panic_with_error!(env, Error::Unauthorized);
+        }
+        caller.require_auth();
+    }
+
+    fn open_obligations(env: &Env, solver: &Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OpenObligations(solver.clone()))
+            .unwrap_or(0)
+    }
+
+    fn store_open_obligations(env: &Env, solver: &Address, count: u32) {
+        let key = DataKey::OpenObligations(solver.clone());
+        if count == 0 {
+            env.storage().persistent().remove(&key);
+        } else {
+            env.storage().persistent().set(&key, &count);
+            Self::bump_persistent_ttl(env, &key);
+        }
+    }
+
+    fn bump_persistent_ttl(env: &Env, key: &DataKey) {
+        env.storage().persistent().extend_ttl(
+            key,
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
+    }
+
+    fn bump_instance_ttl(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    }
+
+    fn bump_solver_ttl(env: &Env, solver: &Address) {
+        env.storage().persistent().extend_ttl(
+            &DataKey::Solver(solver.clone()),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
+    }
+}
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
     }
 
     fn bump_instance_ttl(env: &Env) {

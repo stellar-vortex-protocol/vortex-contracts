@@ -18,7 +18,7 @@
 
 use crate::{Error, ProofRecord, ProofRegistry, ProofRegistryClient, VaaEnvelope};
 use soroban_sdk::{
-    contract, contractimpl, testutils::Address as _, Address, Bytes, BytesN, Env, String,
+    contract, contractimpl, testutils::Address as _, Address, Bytes, BytesN, Env, String, Symbol,
 };
 
 // ─── Mock Wormhole Core (the one mocked boundary) ────────────────────────────
@@ -100,6 +100,7 @@ struct Ctx {
     env: Env,
     admin: Address,
     wormhole_core: Address,
+    axelar_gateway: Address,
     contract_id: Address,
 }
 
@@ -115,15 +116,18 @@ fn setup() -> Ctx {
 
     let admin = Address::generate(&env);
     let wormhole_core = env.register_contract(None, MockWormholeCore);
+    let axelar_gateway = Address::generate(&env);
     let contract_id = env.register_contract(None, ProofRegistry);
 
     let ctx = Ctx {
         env,
         admin,
         wormhole_core,
+        axelar_gateway,
         contract_id,
     };
-    ctx.client().initialize(&ctx.admin, &ctx.wormhole_core);
+    ctx.client()
+        .initialize(&ctx.admin, &ctx.wormhole_core, &ctx.axelar_gateway);
     ctx
 }
 
@@ -186,7 +190,9 @@ fn build_vaa(
 #[test]
 fn initialize_succeeds_once() {
     let ctx = setup();
-    let res = ctx.client().try_initialize(&ctx.admin, &ctx.wormhole_core);
+    let res = ctx
+        .client()
+        .try_initialize(&ctx.admin, &ctx.wormhole_core, &ctx.axelar_gateway);
     assert_eq!(res, Err(Ok(Error::AlreadyInitialized.into())));
 }
 
@@ -194,6 +200,124 @@ fn initialize_succeeds_once() {
 fn initialize_records_wormhole_core() {
     let ctx = setup();
     assert_eq!(ctx.client().get_wormhole_core(), Some(ctx.wormhole_core.clone()));
+}
+
+#[test]
+fn initialize_records_axelar_gateway() {
+    let ctx = setup();
+    assert_eq!(
+        ctx.client().get_axelar_gateway(),
+        Some(ctx.axelar_gateway.clone())
+    );
+}
+
+// ─── Authorized Axelar source management (#381) ─────────────────────────────
+
+#[test]
+fn set_and_get_authorized_axelar_source() {
+    let ctx = setup();
+    let chain = Symbol::new(&ctx.env, "ethereum");
+    let source = String::from_str(&ctx.env, "0x1111111111111111111111111111111111111111");
+    ctx.client().set_authorized_axelar_source(&chain, &source);
+    assert_eq!(
+        ctx.client().get_authorized_axelar_source(&chain),
+        Some(source)
+    );
+}
+
+#[test]
+fn get_authorized_axelar_source_returns_none_if_unset() {
+    let ctx = setup();
+    let chain = Symbol::new(&ctx.env, "ethereum");
+    assert_eq!(ctx.client().get_authorized_axelar_source(&chain), None);
+}
+
+#[test]
+fn authorized_axelar_sources_are_keyed_per_chain() {
+    let ctx = setup();
+    let c = ctx.client();
+    let eth = Symbol::new(&ctx.env, "ethereum");
+    let base = Symbol::new(&ctx.env, "base");
+    let eth_src = String::from_str(&ctx.env, "0xeeee");
+    let base_src = String::from_str(&ctx.env, "0xbbbb");
+    c.set_authorized_axelar_source(&eth, &eth_src);
+    c.set_authorized_axelar_source(&base, &base_src);
+    assert_eq!(c.get_authorized_axelar_source(&eth), Some(eth_src));
+    assert_eq!(c.get_authorized_axelar_source(&base), Some(base_src));
+}
+
+#[test]
+fn remove_authorized_axelar_source_clears_entry() {
+    let ctx = setup();
+    let c = ctx.client();
+    let chain = Symbol::new(&ctx.env, "ethereum");
+    c.set_authorized_axelar_source(&chain, &String::from_str(&ctx.env, "0xeeee"));
+    c.remove_authorized_axelar_source(&chain);
+    assert_eq!(c.get_authorized_axelar_source(&chain), None);
+}
+
+#[test]
+fn axelar_source_setters_require_admin_auth() {
+    let ctx = setup();
+    let c = ctx.client();
+    let chain = Symbol::new(&ctx.env, "ethereum");
+    // Drop the blanket auth mock: no signature from the admin is present.
+    ctx.env.set_auths(&[]);
+    assert!(c
+        .try_set_authorized_axelar_source(&chain, &String::from_str(&ctx.env, "0xeeee"))
+        .is_err());
+    assert!(c.try_remove_authorized_axelar_source(&chain).is_err());
+    assert_eq!(c.get_authorized_axelar_source(&chain), None);
+}
+
+#[test]
+fn receive_message_axelar_accepts_configured_source() {
+    let ctx = setup();
+    let c = ctx.client();
+    let chain = Symbol::new(&ctx.env, "ethereum");
+    let source = String::from_str(&ctx.env, "0xeeee");
+    c.set_authorized_axelar_source(&chain, &source);
+
+    let intent_id = make_intent_id(&ctx.env, 7);
+    let payload = Bytes::from_slice(&ctx.env, &make_payload(&intent_id, 2, 5_000));
+    c.receive_message_axelar(&chain, &source, &payload);
+
+    let record = c.get_proof(&intent_id).expect("proof stored");
+    assert_eq!(record.src_chain_id, 2);
+    assert_eq!(record.src_amount, 5_000);
+}
+
+#[test]
+fn receive_message_axelar_rejects_wrong_source() {
+    let ctx = setup();
+    let c = ctx.client();
+    let chain = Symbol::new(&ctx.env, "ethereum");
+    c.set_authorized_axelar_source(&chain, &String::from_str(&ctx.env, "0xeeee"));
+
+    let intent_id = make_intent_id(&ctx.env, 8);
+    let payload = Bytes::from_slice(&ctx.env, &make_payload(&intent_id, 2, 5_000));
+    let res = c.try_receive_message_axelar(&chain, &String::from_str(&ctx.env, "0xbad"), &payload);
+    assert_eq!(res, Err(Ok(Error::EmitterNotAuthorized.into())));
+    assert!(!c.has_proof(&intent_id));
+}
+
+#[test]
+fn receive_message_axelar_rejects_unconfigured_and_removed_chain() {
+    let ctx = setup();
+    let c = ctx.client();
+    let chain = Symbol::new(&ctx.env, "ethereum");
+    let source = String::from_str(&ctx.env, "0xeeee");
+    let intent_id = make_intent_id(&ctx.env, 9);
+    let payload = Bytes::from_slice(&ctx.env, &make_payload(&intent_id, 2, 5_000));
+
+    let res = c.try_receive_message_axelar(&chain, &source, &payload);
+    assert_eq!(res, Err(Ok(Error::EmitterNotAuthorized.into())));
+
+    c.set_authorized_axelar_source(&chain, &source);
+    c.remove_authorized_axelar_source(&chain);
+    let res = c.try_receive_message_axelar(&chain, &source, &payload);
+    assert_eq!(res, Err(Ok(Error::EmitterNotAuthorized.into())));
+    assert!(!c.has_proof(&intent_id));
 }
 
 // ─── Authorized emitter management ──────────────────────────────────────────

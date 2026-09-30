@@ -1,0 +1,83 @@
+name: Nightly Fuzz Testing
+
+on:
+  schedule:
+    # Daily at 2 AM UTC — low-traffic time, allows ~6 hours before morning standups
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+# ── GITHUB_TOKEN permission policy ────────────────────────────────────────────
+# Hardened to the minimum: contents: read (checkout only).
+# No GitHub API calls; proptest runs locally on the runner.
+permissions:
+  contents: read
+
+# Cancel in-progress runs for the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proptest-nightly:
+    name: Proptest nightly run
+    runs-on: ubuntu-latest
+    # Advisory: scheduled fuzzing should not block PRs. If a crash is found,
+    # the scheduled run fails visibly but does not affect PR merges.
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: intent_settlement
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: intent_settlement
+          # Nightly runs get their own cache key to avoid cache cross-contamination
+          # with PR runs (scheduled jobs have no PR to scope the cache to).
+          key: nightly-fuzz
+
+      - name: Run proptest harness with high case count
+        # PROPTEST_CASES controls iteration budget:
+        # - PR runs (ci.yml): 256 cases, ~30s per harness
+        # - Nightly runs: 10000 cases, ~10 minutes per harness (acceptable for
+        #   scheduled jobs, catches regressions across longer sequences)
+        # PROPTEST_TIMEOUT: 60s per test case (generous for nightly)
+        env:
+          PROPTEST_CASES: 10000
+          PROPTEST_TIMEOUT: 60000
+        run: |
+          echo "### Nightly Proptest Run" >> "$GITHUB_STEP_SUMMARY"
+          echo "Running proptest harnesses with PROPTEST_CASES=10000" >> "$GITHUB_STEP_SUMMARY"
+
+          # Bond conservation proptest
+          echo "**Bond conservation test**" >> "$GITHUB_STEP_SUMMARY"
+          if cargo test --features testutils -- bond_conservation --nocapture 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"; then
+            echo "✅ Bond conservation test passed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ Bond conservation test failed" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # Fill conservation proptest (if it exists)
+          echo "**Fill conservation test**" >> "$GITHUB_STEP_SUMMARY"
+          if cargo test --features testutils -- fill_conservation --nocapture 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"; then
+            echo "✅ Fill conservation test passed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ Fill conservation test failed" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proptest-artifacts-${{ github.run_id }}
+          path: |
+            intent_settlement/target/debug/
+            intent_settlement/.proptest-regressions
+            intent_settlement/proptest-regressions/
+          retention-days: 30
