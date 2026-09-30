@@ -1,15 +1,14 @@
-# vortex-contract
-
-**Soroban smart contracts for [Vortex Protocol](https://github.com/vortex-protocol) — intent-based cross-chain swaps settled on Stellar.**
-
-[![CI](https://github.com/vortex-protocol/vortex-contract/actions/workflows/ci.yml/badge.svg)](https://github.com/vortex-protocol/vortex-contract/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/vortex-protocol/vortex-contracts/branch/main/graph/badge.svg)](https://codecov.io/gh/vortex-protocol/vortex-contracts)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-
-This repository holds the on-chain logic that guarantees settlement: intent
-lifecycle, solver bonds, and slashing. Part of the multi-repo Vortex stack —
-see also [`vortex-backend`](https://github.com/vortex-protocol/vortex-backend)
 and [`vortex-frontend`](https://github.com/vortex-protocol/vortex-frontend).
+
+---
+
+## Security
+
+Please report vulnerabilities via [`SECURITY.md`](./SECURITY.md). A draft
+bug-bounty program, scoped to that document’s Assets at Risk table, lives
+in [`docs/bug-bounty-program.md`](./docs/bug-bounty-program.md). The
+program is unfunded (`REAL_MONEY=false`) until treasury infrastructure
+can pay rewards.
 
 ---
 
