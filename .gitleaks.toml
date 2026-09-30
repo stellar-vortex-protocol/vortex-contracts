@@ -1,0 +1,56 @@
+# Gitleaks configuration for vortex-contracts
+# See: https://github.com/gitleaks/gitleaks/blob/master/docs/CONFIGURATION.md
+
+[build]
+# Allow the tool to perform verbose logging
+verbose = false
+
+[[rules]]
+id = "stellar-secret-key"
+description = "Detects Stellar secret keys (S...)"
+regex = '''S[A-Z2-7]{55}'''
+entropy = 4.3
+keywords = ["SECRET", "secret", "STELLAR_SECRET"]
+allowlist = [
+  # Placeholder secret key from deploy-testnet.env.example
+  "regex:SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+]
+
+[[rules]]
+id = "stellar-account-id-in-comments"
+description = "Detects Stellar account addresses in code context (GA...)"
+# This rule is for documentation and examples; very permissive to avoid FP noise
+regex = '''G[A-Z2-7]{55}'''
+entropy = 0
+keywords = ["ADMIN", "admin", "ACCOUNT", "address"]
+allowlist = [
+  # Placeholder public addresses from deploy-testnet.env.example and docs
+  "regex:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+]
+
+[[rules]]
+id = "ethereum-private-key"
+description = "Detects Ethereum private keys (hex, 64 chars)"
+regex = '''(?i)(0x)?[a-f0-9]{64}'''
+entropy = 3.5
+keywords = ["PRIVATE_KEY", "private_key", "SECRET_KEY", "secret_key"]
+
+[[rules]]
+id = "generic-api-key-pattern"
+description = "Detects potential API keys in env var assignments"
+regex = '''(?i)(api[_-]?key|token|secret|password)[\s=:]+[A-Za-z0-9_\-\.]{20,}'''
+entropy = 3.0
+keywords = ["API", "TOKEN", "SECRET", "PASSWORD"]
+
+[[rules]]
+id = "hardcoded-credentials-in-env"
+description = "Detects common env var patterns with suspicious values"
+regex = '''(?i)(STELLAR_|ADMIN_|DEPLOYER_|SOLVER_|SOURCE_)[A-Z_]*[\s=:]+[A-Za-z0-9_\-\.\+\/]{12,}'''
+entropy = 2.5
+keywords = ["SECRET", "KEY", "TOKEN", "PASSWORD"]
+allowlist = [
+  # Placeholder values from deploy-testnet.env.example are OK
+  "regex:SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "regex:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "regex:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2OJ"
+]

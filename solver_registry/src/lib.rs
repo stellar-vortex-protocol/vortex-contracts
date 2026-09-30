@@ -21,8 +21,8 @@
 //! test module is the shared cross-check.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, BytesN,
+    Env, Symbol, Vec,
 };
 
 #[cfg(test)]
@@ -99,6 +99,12 @@ pub enum DataKey {
     TotalSolvers,
     /// Persistent: per-solver record.
     Solver(Address),
+    /// Persistent: presence means `solver` holds an open obligation for
+    /// `intent_id` in settlement (issue #392). Keyed per intent so
+    /// `lock_obligation` / `release_obligation` are idempotent.
+    Obligation(Address, BytesN<32>),
+    /// Persistent: number of open obligations (`u32`) held by a solver.
+    OpenObligations(Address),
 }
 
 /// One row of the tunable part of the tier table.
@@ -536,6 +542,84 @@ impl SolverRegistry {
         (slash_amount, new_tier)
     }
 
+    // ── Obligation locks (writer only) ──────────────────────────────────────
+
+    /// Record that `solver` holds an open obligation for `intent_id` (called
+    /// by settlement when the solver accepts the intent). Idempotent per
+    /// intent: locking an intent that is already locked leaves the count
+    /// unchanged. Returns the solver's open-obligation count.
+    ///
+    /// `caller` must be the configured writer; unlike `record_fill`, the
+    /// admin cannot drive this path, so obligations only reflect real
+    /// settlement state.
+    pub fn lock_obligation(
+        env: Env,
+        caller: Address,
+        solver: Address,
+        intent_id: BytesN<32>,
+    ) -> u32 {
+        Self::require_writer(&env, &caller);
+        // Only registered solvers can accept intents.
+        Self::load_solver(&env, &solver);
+
+        let key = DataKey::Obligation(solver.clone(), intent_id.clone());
+        let mut count = Self::open_obligations(&env, &solver);
+        if env.storage().persistent().has(&key) {
+            return count;
+        }
+        count += 1;
+        env.storage().persistent().set(&key, &true);
+        Self::bump_persistent_ttl(&env, &key);
+        Self::store_open_obligations(&env, &solver, count);
+        env.events().publish(
+            (Symbol::new(&env, "obligation_locked"), solver),
+            (intent_id, count),
+        );
+        count
+    }
+
+    /// Clear `solver`'s obligation for `intent_id` (called by settlement on
+    /// fill, slash, or re-open). Idempotent per intent: releasing an intent
+    /// that is not locked leaves the count unchanged. Does not require the
+    /// solver to still be registered, so a stale lock can always be cleared.
+    /// Returns the solver's open-obligation count.
+    ///
+    /// `caller` must be the configured writer.
+    pub fn release_obligation(
+        env: Env,
+        caller: Address,
+        solver: Address,
+        intent_id: BytesN<32>,
+    ) -> u32 {
+        Self::require_writer(&env, &caller);
+
+        let key = DataKey::Obligation(solver.clone(), intent_id.clone());
+        let mut count = Self::open_obligations(&env, &solver);
+        if !env.storage().persistent().has(&key) {
+            return count;
+        }
+        env.storage().persistent().remove(&key);
+        count = count.saturating_sub(1);
+        Self::store_open_obligations(&env, &solver, count);
+        env.events().publish(
+            (Symbol::new(&env, "obligation_released"), solver),
+            (intent_id, count),
+        );
+        count
+    }
+
+    /// Number of open obligations `solver` holds in settlement (0 if none).
+    pub fn get_open_obligations(env: Env, solver: Address) -> u32 {
+        Self::open_obligations(&env, &solver)
+    }
+
+    /// `true` iff `solver` holds an open obligation for `intent_id`.
+    pub fn has_obligation(env: Env, solver: Address, intent_id: BytesN<32>) -> bool {
+        env.storage()
+            .persistent()
+            .has(&DataKey::Obligation(solver, intent_id))
+    }
+
     // ── Views ───────────────────────────────────────────────────────────────
 
     /// Current tier (0..=4) for `solver`. Unknown solver → 0.
@@ -714,6 +798,45 @@ impl SolverRegistry {
             }
         }
         caller.require_auth();
+    }
+
+    /// Strict writer check for the obligation path: the writer must be
+    /// configured and `caller` must be it (the admin is not accepted).
+    fn require_writer(env: &Env, caller: &Address) {
+        let writer: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Writer)
+            .unwrap_or_else(|| panic_with_error!(env, Error::WriterNotSet));
+        if *caller != writer {
+            panic_with_error!(env, Error::Unauthorized);
+        }
+        caller.require_auth();
+    }
+
+    fn open_obligations(env: &Env, solver: &Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OpenObligations(solver.clone()))
+            .unwrap_or(0)
+    }
+
+    fn store_open_obligations(env: &Env, solver: &Address, count: u32) {
+        let key = DataKey::OpenObligations(solver.clone());
+        if count == 0 {
+            env.storage().persistent().remove(&key);
+        } else {
+            env.storage().persistent().set(&key, &count);
+            Self::bump_persistent_ttl(env, &key);
+        }
+    }
+
+    fn bump_persistent_ttl(env: &Env, key: &DataKey) {
+        env.storage().persistent().extend_ttl(
+            key,
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
     }
 
     fn bump_instance_ttl(env: &Env) {
