@@ -3653,10 +3653,17 @@ impl IntentSettlement {
     /// Records `now` as `user`'s most recent cancel, starting a fresh cooldown.
     /// A `batch_cancel_intent` call stamps this once for the whole batch, so a
     /// batch counts as a single cancel action for rate-limiting.
+    ///
+    /// TTL is bumped here so an archived cooldown entry cannot silently reset
+    /// the rate-limit, enabling cancel spam (archival-safety fix).
     fn stamp_cancel_cooldown(env: &Env, user: &Address, now: u64) {
-        env.storage()
-            .persistent()
-            .set(&DataKey::CancelCooldown(user.clone()), &now);
+        let key = DataKey::CancelCooldown(user.clone());
+        env.storage().persistent().set(&key, &now);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
     }
 
     /// The actual cancellation: ownership + state checks, flip to `Cancelled`,
@@ -3791,10 +3798,17 @@ impl IntentSettlement {
     }
 
     /// #358: Records `now` as `user`'s most recent amendment, starting a fresh cooldown.
+    ///
+    /// TTL is bumped here so an archived cooldown entry cannot silently reset
+    /// the rate-limit, enabling amendment spam (archival-safety fix).
     fn stamp_amendment_cooldown(env: &Env, user: &Address, now: u64) {
-        env.storage()
-            .persistent()
-            .set(&DataKey::AmendmentCooldown(user.clone()), &now);
+        let key = DataKey::AmendmentCooldown(user.clone());
+        env.storage().persistent().set(&key, &now);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
     }
 
     /// Solver begins fill by depositing dst_token into escrow. Starts dispute window.
@@ -5344,9 +5358,17 @@ impl IntentSettlement {
 
         // Extend the deadline by one extension quantum and record the new total.
         intent.deadline += MAX_EXTENSION_DURATION;
+        let ext_key = DataKey::ExtensionGranted(intent_id.clone());
         env.storage()
             .persistent()
-            .set(&DataKey::ExtensionGranted(intent_id.clone()), &new_used);
+            .set(&ext_key, &new_used);
+        // Bump TTL so an archived flag cannot silently allow a second extension
+        // (archival-safety fix: one-shot flags must outlive the intent they guard).
+        env.storage().persistent().extend_ttl(
+            &ext_key,
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
 
         Self::save_intent(&env, &intent_id, &intent);
 

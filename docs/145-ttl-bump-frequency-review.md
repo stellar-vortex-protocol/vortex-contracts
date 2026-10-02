@@ -99,3 +99,23 @@ terminal intents:
 
 This means the storage growth rate for terminal intents is now bounded by
 the throughput × retention window rather than by the full protocol lifetime.
+
+
+---
+
+## 6. Archival-safety audit (follow-up)
+
+A subsequent audit identified three persistent keys written without a TTL
+bump — `CancelCooldown`, `AmendmentCooldown`, and `ExtensionGranted`.
+Without a bump these entries can be archived within `min_persistent_entry_ttl`
+ledgers (~42 minutes on mainnet), silently resetting rate-limits and one-shot
+flags.
+
+The fixes were applied in `stamp_cancel_cooldown`, `stamp_amendment_cooldown`,
+and `request_extension` (all in `intent_settlement/src/lib.rs`).
+
+A comprehensive archival-safety test suite was added at
+`intent_settlement/src/test_archival.rs`.
+
+Full findings are documented in
+[docs/archival-safety-audit.md](archival-safety-audit.md).

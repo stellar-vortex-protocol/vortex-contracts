@@ -2,7 +2,7 @@
 name = "vortex-common"
 version.workspace = true
 edition.workspace = true
-publish.workspace = false
+publish = false
 
 [lib]
 crate-type = ["rlib", "cdylib"]
