@@ -47,7 +47,7 @@ interface Config {
 /**
  * Load configuration from environment variables with defaults
  */
-function loadConfig(): Config {
+export function loadConfig(): Config {
   return {
     rpcUrl: process.env.SOROBAN_RPC_URL || "http://localhost:8001",
     contractId: process.env.CONTRACT_ID || "",
@@ -78,7 +78,7 @@ interface EventPayload {
 /**
  * Event relay service
  */
-class EventRelay {
+export class EventRelay {
   private config: Config;
   private logger: ReturnType<typeof pino>;
   private server: Server;
@@ -327,9 +327,16 @@ class EventRelay {
   /**
    * Stop the relay service
    */
-  private stop(): void {
+  stop(): void {
     this.isRunning = false;
     this.logger.info("Event relay service stopped");
+  }
+
+  /**
+   * Expose the internal Express app for integration testing.
+   */
+  get expressApp() {
+    return this.app;
   }
 }
 
@@ -338,7 +345,7 @@ class EventRelay {
 /**
  * Main entry point
  */
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   try {
     const config = loadConfig();
     const relay = new EventRelay(config);
@@ -349,4 +356,10 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+// Only run when executed directly (not when imported by tests).
+// In ESM the canonical check is comparing import.meta.url to process.argv[1].
+const moduleUrl = new URL(import.meta.url).pathname;
+const entryPath = process.argv[1];
+if (moduleUrl === entryPath || entryPath?.endsWith("index.js")) {
+  main();
+}

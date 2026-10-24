@@ -34,6 +34,30 @@ proof_registry/src/                  @stellar-vortex-protocol/proof-registry-rev
 # Solver registry contract — solver identity and configuration
 solver_registry/src/                 @stellar-vortex-protocol/solver-registry-reviewers
 
+# Reputation badge contract — soulbound solver tier badges (issue #515)
+reputation_badge/src/                @stellar-vortex-protocol/solver-registry-reviewers
+
+# Governor contract — on-chain governance and proposal execution (issue #515)
+governor/src/                        @stellar-vortex-protocol/governance-reviewers
+
+# Backstop vault — liquidity backstop for settlement (issue #515)
+backstop_vault/src/                  @stellar-vortex-protocol/intent-settlement-reviewers
+
+# Fee router — fee distribution and routing logic (issue #515)
+fee_router/src/                      @stellar-vortex-protocol/intent-settlement-reviewers
+
+# Intent periphery — helper contracts wrapping settlement intents (issue #515)
+intent_periphery/src/                @stellar-vortex-protocol/intent-settlement-reviewers
+
+# Treasury streams — streaming payment / treasury management (issue #515)
+treasury_streams/src/                @stellar-vortex-protocol/intent-settlement-reviewers
+
+# Timelock — generic timelock controller (issue #515)
+timelock/src/                        @stellar-vortex-protocol/governance-reviewers
+
+# Vortex common — shared constants, types, and helpers (issue #515)
+vortex-common/src/                   @stellar-vortex-protocol/maintainers
+
 # ───────────────────────────────────────────────────────────────────────────
 # Integration, Indexing, and Tooling
 # ───────────────────────────────────────────────────────────────────────────

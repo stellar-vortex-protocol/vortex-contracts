@@ -1,24 +1,26 @@
 # Vortex Contracts — Makefile
 #
 # Wraps the commands documented in README.md so contributors never need to
-# copy-paste raw multi-flag invocations.  All targets run inside the
-# intent_settlement workspace directory.
+# copy-paste raw multi-flag invocations.  All workspace-wide targets (fmt,
+# fmt-check, lint, test, build, audit, clean) iterate over every Rust crate
+# listed in ALL_CRATES so that a single `make all` covers the whole repo
+# (issue #514).
+#
+# Per-crate targets are also available for focused work:
+#   make <crate>-fmt | <crate>-lint | <crate>-test | <crate>-build | <crate>-all
 #
 # Usage:
-#   make          — print help
-#   make all      — fmt + lint + test + build (full pre-push check)
-#   make fmt      — format all source files
-#   make lint     — clippy with -D warnings (identical to CI)
-#   make test     — run unit / integration tests
-#   make build    — compile the release wasm binary
-#   make deploy-testnet — deploy to Stellar testnet (requires STELLAR_SOURCE)
+#   make              — print help
+#   make all          — fmt + lint + test + build across ALL crates
+#   make fmt          — format every crate
+#   make lint         — clippy -D warnings on every crate
+#   make test         — run tests in every crate
+#   make build        — build release wasm for every crate
+#   make deploy-testnet — deploy intent_settlement to Stellar testnet
 #
-# Proof Registry targets (issue #213):
-#   make proof-registry-fmt      — format proof_registry source
-#   make proof-registry-lint     — clippy proof_registry
-#   make proof-registry-test     — test proof_registry
-#   make proof-registry-build    — build proof_registry wasm
-#   make proof-registry-all      — full check for proof_registry
+# Kani / proptest targets (issues #415, #544):
+#   make kani         — model-check Kani harnesses (requires kani-verifier)
+#   make proptest     — run proptest suites across Kani-covered crates
 
 .PHONY: build-wasms integration-test
 
@@ -28,57 +30,136 @@ build-wasms:
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
+# Primary deploy target kept for backward compat (deploy-testnet target).
 WORKSPACE       := intent_settlement
-PROOF_REGISTRY  := proof_registry
 WASM_TARGET     := wasm32-unknown-unknown
 WASM_OUT        := $(WORKSPACE)/target/$(WASM_TARGET)/release/vortex_intent_settlement.wasm
-PR_WASM_OUT     := $(PROOF_REGISTRY)/target/$(WASM_TARGET)/release/vortex_proof_registry.wasm
 STELLAR_NETWORK ?= testnet
 # Set STELLAR_SOURCE to your secret key or key-name before running deploy-testnet
 STELLAR_SOURCE  ?=
 
+# All Rust crates in the workspace (issue #514).
+# vortex-common is a library crate with no wasm target; it is included in
+# fmt/lint/test but excluded from the build target (no cdylib output).
+ALL_CRATES := \
+	vortex-common \
+	intent_settlement \
+	solver_registry \
+	proof_registry \
+	reputation_badge \
+	treasury_streams \
+	fee_router \
+	arbiter_panel \
+	governor \
+	backstop_vault \
+	intent_periphery \
+	timelock
+
+# Crates that produce a wasm binary (cdylib).  vortex-common is excluded.
+WASM_CRATES := \
+	intent_settlement \
+	solver_registry \
+	proof_registry \
+	reputation_badge \
+	treasury_streams \
+	fee_router \
+	arbiter_panel \
+	governor \
+	backstop_vault \
+	intent_periphery \
+	timelock
+
 # Crates that carry Kani harnesses and/or property-based tests (issue #544).
 KANI_CRATES     := intent_settlement solver_registry proof_registry
 
-# ── Compound targets ──────────────────────────────────────────────────────────
+# ── Workspace-wide compound targets ──────────────────────────────────────────
 
 .PHONY: all
-all: fmt lint test build  ## Run fmt, lint, test, and build (full pre-push check)
+all: fmt lint test build  ## Run fmt, lint, test, and build across all crates (full pre-push check)
 
-.PHONY: proof-registry-all
-proof-registry-all: proof-registry-fmt proof-registry-lint proof-registry-test proof-registry-build  ## Full check for proof_registry
-
-# ── Individual targets (intent_settlement) ─────────────────────────────────────
+# ── Workspace-wide individual targets ────────────────────────────────────────
 
 .PHONY: fmt
-fmt:  ## Format all source files with rustfmt
-	cd $(WORKSPACE) && cargo fmt --all
+fmt:  ## Format every crate with rustfmt
+	@set -e; for crate in $(ALL_CRATES); do \
+		echo "==> cargo fmt in $$crate"; \
+		( cd $$crate && cargo fmt --all ); \
+	done
 
 .PHONY: fmt-check
-fmt-check:  ## Check formatting without modifying files (used by CI)
-	cd $(WORKSPACE) && cargo fmt --all -- --check
+fmt-check:  ## Check formatting in every crate without modifying files (used by CI)
+	@set -e; for crate in $(ALL_CRATES); do \
+		echo "==> cargo fmt --check in $$crate"; \
+		( cd $$crate && cargo fmt --all -- --check ); \
+	done
 
 .PHONY: lint
-lint:  ## Run clippy with -D warnings (identical to the CI command)
-	cd $(WORKSPACE) && cargo clippy --all-targets -- -D warnings
+lint:  ## Run clippy -D warnings on every crate (identical to the CI command)
+	@set -e; for crate in $(ALL_CRATES); do \
+		echo "==> cargo clippy in $$crate"; \
+		( cd $$crate && cargo clippy --all-targets -- -D warnings ); \
+	done
 
 .PHONY: test
-test:  ## Run the full test suite
-	cd $(WORKSPACE) && cargo test
+test:  ## Run the full test suite in every crate
+	@set -e; for crate in $(ALL_CRATES); do \
+		echo "==> cargo test in $$crate"; \
+		( cd $$crate && cargo test ); \
+	done
 
 .PHONY: build
-build:  ## Build the release wasm binary
-	cd $(WORKSPACE) && cargo build --target $(WASM_TARGET) --release
+build:  ## Build the release wasm binary for every wasm crate
+	@set -e; for crate in $(WASM_CRATES); do \
+		echo "==> cargo build --release in $$crate"; \
+		( cd $$crate && cargo build --target $(WASM_TARGET) --release ); \
+	done
 
 .PHONY: audit
-audit:  ## Run cargo-audit against the dependency tree
-	cd $(WORKSPACE) && cargo audit
+audit:  ## Run cargo-audit against every crate's dependency tree
+	@set -e; for crate in $(ALL_CRATES); do \
+		echo "==> cargo audit in $$crate"; \
+		( cd $$crate && cargo audit ); \
+	done
+
+.PHONY: clean
+clean:  ## Remove build artefacts from every crate
+	@set -e; for crate in $(ALL_CRATES); do \
+		echo "==> cargo clean in $$crate"; \
+		( cd $$crate && cargo clean ); \
+	done
+
+# ── Per-crate convenience targets ─────────────────────────────────────────────
+#
+# Pattern: make <crate>-fmt | <crate>-fmt-check | <crate>-lint |
+#          <crate>-test | <crate>-build | <crate>-audit | <crate>-clean |
+#          <crate>-all
+#
+# Implemented via static rules so `make help` can document them and tab-
+# completion works.  Add new crates to ALL_CRATES above; the rules below
+# need no changes.
+
+define CRATE_RULES
+.PHONY: $(1)-fmt $(1)-fmt-check $(1)-lint $(1)-test $(1)-build $(1)-audit $(1)-clean $(1)-all
+$(1)-fmt:        ## Format $(1) source files
+	cd $(1) && cargo fmt --all
+$(1)-fmt-check:  ## Check $(1) formatting without modifying
+	cd $(1) && cargo fmt --all -- --check
+$(1)-lint:       ## Run clippy on $(1)
+	cd $(1) && cargo clippy --all-targets -- -D warnings
+$(1)-test:       ## Run $(1) test suite
+	cd $(1) && cargo test
+$(1)-build:      ## Build $(1) release wasm
+	cd $(1) && cargo build --target $(WASM_TARGET) --release
+$(1)-audit:      ## Run cargo-audit on $(1)
+	cd $(1) && cargo audit
+$(1)-clean:      ## Remove $(1) build artefacts
+	cd $(1) && cargo clean
+$(1)-all: $(1)-fmt $(1)-lint $(1)-test $(1)-build  ## Full check for $(1)
+endef
+
+$(foreach crate,$(ALL_CRATES),$(eval $(call CRATE_RULES,$(crate))))
 
 # ── Generated documentation (issue #531) ─────────────────────────────────────
-#
-# README.md's "Error Reference" table is generated from the `Error` enum in
-# intent_settlement/src/lib.rs.  `error-reference-check` fails when the two
-# have drifted apart; `error-reference` rewrites the table.
 
 .PHONY: error-reference
 error-reference:  ## Regenerate README.md's Error Reference table from the Error enum
@@ -88,44 +169,10 @@ error-reference:  ## Regenerate README.md's Error Reference table from the Error
 error-reference-check:  ## Verify README.md's Error Reference table matches the Error enum
 	python3 scripts/generate-error-reference.py --check
 
-.PHONY: clean
-clean:  ## Remove build artefacts
-	cd $(WORKSPACE) && cargo clean
-
-# ── Proof Registry targets (issue #213) ────────────────────────────────────────
-
-.PHONY: proof-registry-fmt
-proof-registry-fmt:  ## Format proof_registry source files
-	cd $(PROOF_REGISTRY) && cargo fmt --all
-
-.PHONY: proof-registry-fmt-check
-proof-registry-fmt-check:  ## Check proof_registry formatting without modifying
-	cd $(PROOF_REGISTRY) && cargo fmt --all -- --check
-
-.PHONY: proof-registry-lint
-proof-registry-lint:  ## Run clippy on proof_registry
-	cd $(PROOF_REGISTRY) && cargo clippy --all-targets -- -D warnings
-
-.PHONY: proof-registry-test
-proof-registry-test:  ## Run proof_registry test suite
-	cd $(PROOF_REGISTRY) && cargo test
-
-.PHONY: proof-registry-build
-proof-registry-build:  ## Build proof_registry release wasm
-	cd $(PROOF_REGISTRY) && cargo build --target $(WASM_TARGET) --release
-
-.PHONY: proof-registry-audit
-proof-registry-audit:  ## Run cargo-audit on proof_registry
-	cd $(PROOF_REGISTRY) && cargo audit
-
-.PHONY: proof-registry-clean
-proof-registry-clean:  ## Remove proof_registry build artefacts
-	cd $(PROOF_REGISTRY) && cargo clean
-
 # ── Deploy ────────────────────────────────────────────────────────────────────
 
 .PHONY: deploy-testnet
-deploy-testnet: build  ## Deploy the wasm to Stellar testnet (set STELLAR_SOURCE first)
+deploy-testnet: intent_settlement-build  ## Deploy intent_settlement wasm to Stellar testnet (set STELLAR_SOURCE first)
 ifndef STELLAR_SOURCE
 	$(error STELLAR_SOURCE is not set. Export your Stellar secret key or key-name: export STELLAR_SOURCE=<SECRET_KEY>)
 endif

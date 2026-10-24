@@ -8,7 +8,7 @@
     "vortex-monitor": "./vortex-monitor.js"
   },
   "scripts": {
-    "start": "node vortex-monitor.js",
+    "start": "node init && node vortex-monitor.js",
     "test": "node vortex-monitor.test.js"
   },
   "keywords": [

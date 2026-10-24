@@ -9,7 +9,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "node init && tsc",
     "check-drift": "node scripts/check-drift.js"
   },
   "keywords": [
