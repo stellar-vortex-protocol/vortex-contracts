@@ -73,8 +73,16 @@ and currently returns 0 for every tier.
 | `record_fill(caller, solver, intent_id, amount)` | — | `fills_completed += 1`, `total_volume += amount`. |
 | `record_failure(caller, solver, intent_id)` | — | `fills_failed += 1` (no bond movement). |
 | `slash(caller, solver, intent_id)` | `(slash_amount: i128, new_tier: u32)` | Takes `bond * slash_bps(tier) / 10_000` (min 1), transfers it to the fee recipient, `fills_failed += 1`. |
+| `lock_obligation(caller, solver, intent_id)` | `u32` (updated open count) | Marks `intent_id` as an open obligation for `solver`. Idempotent: a second call for the same `(solver, intent_id)` pair is a no-op and returns the unchanged count. `solver` must be registered (`SolverNotRegistered` otherwise). Emits `obligation_locked(solver, (intent_id, count))`. |
+| `release_obligation(caller, solver, intent_id)` | `u32` (updated open count) | Clears the open obligation for `(solver, intent_id)`. Idempotent: if no obligation exists the count is returned unchanged. Emits `obligation_released(solver, (intent_id, count))`. |
 
-Each write is **exactly once per `intent_id`** (#390): a second `record_fill`,
+**Obligation tracking** is the mechanism by which `intent_settlement` prevents a solver
+from deregistering or unstaking while they hold accepted intents. `lock_obligation` is
+called by `intent_settlement` when a solver calls `accept_intent`; `release_obligation`
+is called on `fill_intent`, `slash_solver`, or `expire_intent`. The open-obligation count
+can be read at any time via the view functions below (§3).
+
+Each **scoring** write (`record_fill`, `record_failure`, `slash`) is **exactly once per `intent_id`** (#390): a second `record_fill`,
 `record_failure` or `slash` for the same intent fails with `AlreadyRecorded`,
 whatever the solver. Keys are per action, so a `record_failure` and a `slash`
 for the same intent are independent. A write that reverts (e.g.
@@ -109,6 +117,9 @@ implicit-signer ambiguity.
 | `get_solver(solver)` | `Option<SolverRecord>`. |
 | `get_solver_count()` | `u32`. |
 | `get_writer()` / `get_admin()` / `get_bond_token()` | `Option<Address>`. |
+| `get_open_obligations(solver)` | `u32` — number of currently locked (unresolved) intent obligations for `solver`. Used by `intent_settlement` to block `deregister_solver` / `unstake` while active intents are held. |
+| `has_obligation(solver, intent_id)` | `bool` — `true` if `lock_obligation` has been called for this `(solver, intent_id)` pair and `release_obligation` has not yet cleared it. |
+| `is_intent_recorded(action, intent_id)` | `bool` — idempotency check; `action` is `fill`, `failure`, or `slash`. |
 
 ### `SolverRecord`
 
