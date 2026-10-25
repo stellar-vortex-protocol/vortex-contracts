@@ -241,3 +241,151 @@ hardware wallet — never a hot wallet or a key stored in plaintext.
    compromise on a lower-trust environment immediately threatens mainnet.
 
 3. **Minimal admin transactio
+ns per window.** Admin transactions should be batched and pre-announced where possible. An off-chain audit log of every admin call, indexed by ledger sequence, should be maintained and published.
+
+---
+
+## Threat Model — `solver_registry`
+
+`solver_registry` is the canonical bond custodian for all registered solvers. It holds the USDC bond corpus and enforces tiered staking.
+
+### Assets at Risk
+
+| Asset | Where held | Value |
+|-------|-----------|-------|
+| Solver bonds | `solver_registry` contract account (USDC) | Sum of all registered bonds; Platinum tier requires ≥ 50,000 USDC per solver |
+| Slashed bond proceeds | Transferred to `FeeRecipient` on slash | Up to 10 % of bond per slash event |
+
+### Trust Assumptions
+
+#### 1. Writer (settlement contract) blast radius
+
+The `writer` address — set once via `set_writer` and rotatable only through the 48-hour `propose_writer` / `execute_writer` timelock — is the most powerful role in `solver_registry`. It can call `record_fill`, `record_failure`, `slash`, `lock_obligation`, and `release_obligation`. A compromised writer can slash any solver's bond repeatedly (guarded per intent by `AlreadyRecorded` idempotency) and redirect proceeds to any `FeeRecipient`. The timelock provides a 48-hour monitoring window for off-chain detection before a malicious writer rotation completes.
+
+**Implication:** Monitor `writer_proposed` events. Any unexpected proposal must be treated as a compromise signal and escalated immediately.
+
+#### 2. Admin key blast radius
+
+The admin can tune tier thresholds within enforced bounds, initiate the writer rotation timelock, and initiate a two-step admin handover (also 48-hour timelocked). The admin **cannot** directly transfer bond tokens out — all token movements require writer or solver auth. However, a compromised admin can install a malicious writer, which can then drain bonds over time. The combined blast radius of admin + writer compromise is full bond corpus loss.
+
+#### 3. Obligation-lock griefing
+
+`lock_obligation` and `release_obligation` are writer-only (not admin-callable). If the settlement contract has a bug that locks obligations without ever releasing them, solvers cannot unstake or deregister until the lock is cleared. Solvers with perpetually locked obligations are effectively stuck — their bond is inaccessible.
+
+#### 4. Bond floor on slash
+
+The `slash` function reduces `bond_amount` with no floor. A solver slashed to zero bond retains their `SolverRecord` and can deregister to receive zero tokens back. There is no automatic deactivation at zero bond — the settlement contract is responsible for checking `is_active` / bond sufficiency before accepting new intents from the solver.
+
+---
+
+## Threat Model — `proof_registry`
+
+`proof_registry` is a trust oracle. It converts Wormhole VAAs (and, in a future production path, Axelar GMP messages) into on-chain `ProofRecord` entries that `intent_settlement` uses to gate fills when `require_proof = true`.
+
+### Assets at Risk
+
+`proof_registry` holds no tokens. Its failure mode is **fraudulent proof injection**: a false `ProofRecord` would allow a solver to claim a fill was backed by a verified source-chain deposit when none occurred. This bypasses the economic-deterrent-only model and allows a solver to collect filled intent proceeds without having sent funds on the source chain.
+
+### Trust Assumptions
+
+#### 1. Wormhole Guardian quorum
+
+`receive_message` delegates cryptographic verification entirely to the Wormhole Core contract. A Guardian set compromise (≥ 2/3 of 19 Guardians colluding) would allow fraudulent VAAs to be injected. This residual risk is shared with all Wormhole-integrated protocols and is outside this contract's control.
+
+#### 2. Axelar path is not cryptographically verified (production gap)
+
+`receive_message_axelar` checks that the `source_address` string matches the configured authorized source, but does **not** call the Axelar Gateway contract for message signature verification. Any caller who knows the expected `source_address` string can inject an arbitrary `ProofRecord` via this path. **The Axelar path must not be enabled for production use until full Gateway signature verification is implemented.**
+
+#### 3. Emitter allowlist has no timelock
+
+`set_authorized_emitter` and `set_authorized_axelar_source` are admin-only with no timelock. A compromised admin can add a malicious emitter for any chain ID immediately, allowing fraudulent proofs to be inserted. Monitor `emitter_authorized` and `axelar_source_authorized` events.
+
+#### 4. Freshness window
+
+`get_fresh_proof` rejects proofs older than `PROOF_VALIDITY_WINDOW` (3600 seconds). Callers that use the raw `get_proof` / `has_proof` instead of `get_fresh_proof` bypass this check and may accept stale proofs. `intent_settlement` is intended to call `get_fresh_proof` exclusively on the proof-gated path.
+
+#### 5. testutils back-door
+
+`mock_set_proof` / `mock_remove_proof` are compiled only under the `testutils` Cargo feature. A release build without this feature does not expose them. **Never deploy a `testutils`-enabled build to a live network.**
+
+---
+
+## Threat Model — `reputation_badge`
+
+`reputation_badge` holds no tokens. It records soulbound tier badges (`Bronze` / `Silver` / `Gold` / `Platinum`) for registered solvers.
+
+### Trust Assumptions
+
+#### 1. Dual admin / registry authority
+
+Both `mint_badge` and `burn_badge` accept calls from either the admin or the registered `solver_registry` contract. A compromised admin can mint or burn any badge without going through `solver_registry`'s tier logic. This is an intentional emergency override during the rollout period.
+
+#### 2. `set_solver_registry` has no timelock
+
+The admin can redirect the badge contract to any `solver_registry` address instantly. A compromised admin can point it at a contract that mints arbitrary badges for arbitrary addresses. Monitor `solver_registry_set` events.
+
+#### 3. Badge TTL expiry causes silent downgrade
+
+Badges are stored in persistent storage with a 30-day TTL. A badge that is not refreshed (because no tier-change event occurred) will eventually expire and `get_badge` will return `None` — equivalent to `Unranked` — without an explicit `burn_badge` call. Any consumer that gates privileges on badge presence must account for this silent expiry.
+
+---
+
+## Threat Model — `backstop_vault`
+
+`backstop_vault` custodies LP deposits (USDC). LPs deposit in exchange for pro-rata shares; the vault absorbs settlement shortfalls via `cover()` and earns income via `receive_income()`.
+
+### Assets at Risk
+
+| Asset | Where held | Value |
+|-------|-----------|-------|
+| LP deposits | `backstop_vault` contract account (USDC) | Sum of all LP share redemption values |
+
+(Already included in the `intent_settlement` Assets at Risk table above; this section adds the vault-specific trust model.)
+
+### Trust Assumptions
+
+#### 1. Settlement contract as sole cover/income caller
+
+Only the `Settlement` address set at `initialize` can call `cover` and `receive_income`. This address is immutable after deployment — there is no `set_settlement` entrypoint. A compromised settlement contract can call `cover` to drain the vault to any recipient address. The immutability of the settlement address is a deliberate strong protection: the admin has no direct path to drain LP funds.
+
+#### 2. Emergency mode as LP-exit delay (not drain)
+
+`set_emergency_mode(true)` — admin-only — queues withdrawals instead of executing them. A compromised admin can delay LP exits indefinitely but cannot move tokens out of the vault directly. LPs can process their queued withdrawals once emergency mode is disabled or funds become available.
+
+#### 3. Vault insolvency under repeated cover
+
+`cover()` reduces `TotalAssets` and does not enforce a floor. Repeated cover calls can reduce `TotalAssets` to zero. Normal `withdraw` checks `assets_out > total_assets` and reverts with `VaultInsolvent`; `cover` silently caps its payout at available assets. LPs in a fully drained vault receive zero on withdrawal — this is socialized loss by design.
+
+#### 4. Share-price inflation attack (mitigated)
+
+The vault is seeded with `VIRTUAL_SHARES = 1,000,000,000` and `VIRTUAL_ASSETS = 1,000,000,000` at initialization. A dust first-deposit cannot manipulate the exchange rate to an extreme value.
+
+---
+
+## Threat Model — `arbiter_panel`
+
+`arbiter_panel` custodies arbiter bonds (USDC) and drives the m-of-n dispute resolution process for `intent_settlement`.
+
+### Assets at Risk
+
+| Asset | Where held | Value |
+|-------|-----------|-------|
+| Arbiter bonds | `arbiter_panel` contract account | `bond_amount` × registered arbiter count |
+
+### Trust Assumptions
+
+#### 1. PRNG panel selection is deterministic
+
+Panel selection uses `env.prng()` seeded with the intent ID. Because the intent ID is derived from deterministic parameters, an attacker who can predict or influence the intent ID before registering as an arbiter may predict their panel placement. This is a documented limitation (see design doc). Panel selection is "random-ish, not cryptographically unpredictable."
+
+#### 2. Abstention-based quorum griefing
+
+If fewer than `threshold` (m) arbiters vote within `VOTE_WINDOW` (24 hours), `tally` closes the round without slashing anyone (`outcome = None`). A small coalition of selected arbiters can strategically abstain to prevent resolution while avoiding slash penalties, leaving the dispute open until `intent_settlement`'s `ARBITER_WINDOW` timeout applies and the user receives the full escrow.
+
+#### 3. Core parameters are immutable post-deploy
+
+`settlement`, `bond_token`, `bond_amount`, `panel_size`, and `threshold` are set only at `initialize` and cannot be changed post-deployment. This is a deliberate restriction: it prevents admin manipulation of dispute mechanics but also means parameter errors require a full redeployment.
+
+#### 4. Settlement cross-contract trust
+
+`open_vote` calls `settlement.dispute_parties(intent_id)` to determine which addresses to exclude from the panel. A malicious or misconfigured settlement contract could return arbitrary `(user, solver)` addresses, manipulating arbiter eligibility.
