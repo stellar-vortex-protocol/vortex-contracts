@@ -17,6 +17,7 @@ protocol's own contract addresses.
 - **Admin rotation** is two-step: `propose_admin` then `accept_admin`.
 - **Storage**: `Admin`/`PendingAdmin`/`Names` in instance storage; each entry in
   persistent storage with the repo-standard TTL bump on write and read.
+  A lookup loads the entry once (a single persistent `get`) and bumps its TTL only when found.
 - **Events**: `addr_set` (name, address) and `addr_rm` (name).
 
 ## Out of scope
