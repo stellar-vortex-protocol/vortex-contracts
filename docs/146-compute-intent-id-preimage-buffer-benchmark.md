@@ -66,3 +66,25 @@ integers into one append) is small, its benefit is unmeasurable without the
 harness, and it trades the current straightforwardly-readable preimage build
 for a length-cursor buffer. Revisit only if the harness lands **and** a
 measurement shows a real instruction-count win on `submit_intent`.
+
+## 6. Follow-up (issue #666): buffer reuse across calls
+
+Re-examined the request to reuse one preimage `Bytes` across calls. Not
+applied, for these reasons:
+
+- **Nothing survives between calls.** Each contract invocation runs with a
+  fresh `Env`; a `Bytes` is a host handle that cannot be kept in guest memory
+  or instance storage without costing more than rebuilding it.
+- **There is no repeated preimage to reuse.** `batch_submit_intent` calls
+  `submit_intent_inner` once per item, and each call bumps the user's nonce
+  (`UserNonce`), so every item hashes a different preimage. A single
+  `submit_intent` computes the id exactly once.
+- **The live preimage is not packable.** In the current `compute_intent_id`
+  (`intent_settlement/src/lib.rs`), `src_amount` and `min_dst_amount` are
+  separated by the `dst_token` XDR, and `nonce` sits after the `user` XDR, so
+  the three integers never form one contiguous run. The packing in §2 applies
+  to the legacy timestamp-based variant, which is no longer called.
+
+Result: no code change. The `Bytes` buffers stay per-call, and the id bytes
+are unchanged. No benchmark numbers were recorded because no harness exists
+(see §4).
