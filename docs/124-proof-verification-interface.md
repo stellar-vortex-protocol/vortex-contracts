@@ -121,10 +121,13 @@ pub trait ProofRegistryTrait {
     /// signatures via the Wormhole Core contract, decodes the payload,
     /// checks the emitter is authorized, and stores the ProofRecord.
     ///
-    /// Panics if:
-    ///   - VAA signature verification fails
-    ///   - Emitter not authorized for the claimed chain_id
-    ///   - Intent proof already registered (replay protection)
+    /// Panics if (see §3.5 for the error code each case maps to):
+    ///   - VAA is malformed or signature verification fails (traps in Wormhole Core)
+    ///   - Emitter not authorized for the claimed chain_id (EmitterNotAuthorized)
+    ///   - Payload is not 102 bytes (InvalidPayload)
+    ///   - Payload src_chain_id differs from the signed emitter chain (EmitterChainMismatch)
+    ///   - Intent proof already registered (ProofAlreadyExists)
+    ///   - VAA (emitter_chain, sequence) already processed (VaaAlreadyProcessed)
     fn receive_message(env: Env, vaa: Bytes);
 
     /// Read a stored proof by intent_id. Returns None if not yet received.
@@ -153,6 +156,23 @@ overhead, suitable for Wormhole's generic message payload).
 `ProofRegistry.receive_message` deserializes this payload after VAA verification.
 
 ---
+
+### 3.5 Verification failure semantics
+
+`receive_message` fails closed. Each failure mode maps to one `ProofRegistry`
+`Error` variant, so integrators can tell the cases apart from the error code.
+
+| Failure | Error | Source |
+|---------|-------|--------|
+| VAA malformed, or Guardian signatures invalid / below quorum | (none — traps) | Wormhole Core `parse_and_verify_vaa` reverts the call; no registry error code is returned |
+| Emitter `(chain, address)` not on the allowlist (unknown or wrong verifier) | `EmitterNotAuthorized` (3) | `ProofRegistry` |
+| Payload not exactly 102 bytes | `InvalidPayload` (6) | `ProofRegistry` |
+| Payload `src_chain_id` ≠ signed emitter chain (mismatch) | `EmitterChainMismatch` (9) | `ProofRegistry` |
+| Proof already stored for `intent_id` | `ProofAlreadyExists` (4) | `ProofRegistry` |
+| `(emitter_chain, sequence)` already processed | `VaaAlreadyProcessed` (8) | `ProofRegistry` |
+
+A malformed or badly signed VAA is the one case with no registry error code: the
+trap originates in the Wormhole Core contract and is not remapped here.
 
 ## 4. Changes to `intent_settlement`
 
