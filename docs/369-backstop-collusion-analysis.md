@@ -111,3 +111,10 @@ The only scenario where the attack could be net-positive is if the backstop
 pool happens to be very large (from many legitimate slashes) while no other
 claimants are present — a condition that is both self-defeating (requires
 many prior slashes, each costly to the attacker) and transient.
+
+## Appendix: Vault accounting reads
+
+`deposit` and `withdraw` load `TotalShares` and `TotalAssets` from instance
+storage exactly once per call and reuse the locals for the share/asset
+conversion, the cooldown-scoping check, and the state write-back. The totals
+cannot change mid-call, so no step re-reads them.
