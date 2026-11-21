@@ -104,6 +104,21 @@ info "Local SHA-256:  ${LOCAL_HASH}"
 info "Wasm size:      $(du -h "${WASM_OUT}" | cut -f1)"
 
 # ---------------------------------------------------------------------------
+# 5b. (Optional) Compare against the recorded hash — no network required.
+#     Create intent_settlement.wasm.sha256 (first field = SHA-256) to enable.
+# ---------------------------------------------------------------------------
+RECORDED_FILE="intent_settlement.wasm.sha256"
+if [[ -f "${RECORDED_FILE}" ]]; then
+  EXPECTED_HASH=$(awk '{print $1; exit}' "${RECORDED_FILE}")
+  if [[ "${LOCAL_HASH}" != "${EXPECTED_HASH}" ]]; then
+    die "❌  Hash does not match ${RECORDED_FILE}.
+  expected: ${EXPECTED_HASH}
+  actual:   ${LOCAL_HASH}"
+  fi
+  info "✅  Hash matches ${RECORDED_FILE}."
+fi
+
+# ---------------------------------------------------------------------------
 # 6. (Optional) Compare against the on-chain hash
 #
 #    stellar contract fetch --id <CONTRACT_ID> --network testnet
