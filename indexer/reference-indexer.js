@@ -31,6 +31,9 @@
 
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
+
 // ---------------------------------------------------------------------------
 // State containers
 // ---------------------------------------------------------------------------
@@ -662,6 +665,44 @@ async function fetchEvents(contractId, startLedger) {
 }
 
 // ---------------------------------------------------------------------------
+// Cursor persistence
+// ---------------------------------------------------------------------------
+
+/**
+ * Path to the cursor file. Override with the CURSOR_FILE env var to persist
+ * the last processed ledger elsewhere. Defaults to a local JSON file in the
+ * current working directory.
+ */
+const CURSOR_FILE = process.env.CURSOR_FILE
+  || path.join(process.cwd(), ".indexer-cursor.json");
+
+/**
+ * Read the last processed ledger from the cursor file.
+ * @returns {number|null} the persisted ledger, or null if there is none
+ */
+function loadCursor() {
+  try {
+    const cursor = JSON.parse(fs.readFileSync(CURSOR_FILE, "utf8"));
+    const ledger = Number(cursor.lastProcessedLedger);
+    return Number.isInteger(ledger) && ledger >= 0 ? ledger : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist the highest processed ledger so the next run can resume from it
+ * instead of re-fetching the full ledger range.
+ * @param {number} ledger
+ */
+function saveCursor(ledger) {
+  fs.writeFileSync(
+    CURSOR_FILE,
+    JSON.stringify({ lastProcessedLedger: ledger }, null, 2) + "\n"
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -669,11 +710,27 @@ async function main() {
   const CONTRACT_ID = process.env.CONTRACT_ID || "CEXAMPLECONTRACT";
   const START_LEDGER = parseInt(process.env.START_LEDGER || "0", 10);
 
-  console.log(`[indexer] replaying events for contract ${CONTRACT_ID} from ledger ${START_LEDGER}`);
+  // Resume from the last processed ledger when a cursor is available so we
+  // don't re-request the whole range on every poll. START_LEDGER is the
+  // bootstrap floor used only when no cursor has been persisted yet.
+  const persisted = loadCursor();
+  const startLedger = persisted !== null ? persisted : START_LEDGER;
 
-  const events = await fetchEvents(CONTRACT_ID, START_LEDGER);
+  console.log(`[indexer] replaying events for contract ${CONTRACT_ID} from ledger ${startLedger}`);
+
+  const events = await fetchEvents(CONTRACT_ID, startLedger);
   const indexer = new VortexIndexer();
   indexer.replay(events);
+
+  // Advance the cursor to the highest ledger we just processed.
+  const highestLedger = events.reduce(
+    (max, event) => Math.max(max, Number(event.ledger) || 0),
+    startLedger
+  );
+  if (highestLedger > startLedger) {
+    saveCursor(highestLedger);
+    console.log(`[indexer] cursor advanced to ledger ${highestLedger}`);
+  }
 
   const snap = indexer.snapshot();
   console.log(JSON.stringify(snap, null, 2));
