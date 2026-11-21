@@ -225,8 +225,9 @@ impl TimelockController {
     ) -> BytesN<32> {
         Self::require_role(&env, &PROPOSER);
 
+        // A zero delay bypasses the waiting period even if the configured minimum is 0.
         let min_delay = Self::get_min_delay(env.clone());
-        if delay < min_delay {
+        if delay == 0 || delay < min_delay {
             env.panic_with_error(TimelockError::InsufficientDelay);
         }
 
