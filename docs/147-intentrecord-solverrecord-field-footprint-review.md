@@ -86,3 +86,23 @@ overhead per field is larger than the payload for the small scalars.
    current definitions loses range headroom or wastes an integer width that
    a safe narrowing could reclaim. No serialization tests change because no
    field type changes.
+
+## 5. Per-fill `SolverRecord` read (issue #663)
+
+Audit of `fill_intent_inner` in `intent_settlement/src/lib.rs`:
+
+- The fill path does **not** read `bond_amount` or reputation at all. It
+  loads `DataKey::Solver(solver)` only to update `total_volume`,
+  `fills_completed` and `active_intents`, then writes the record back
+  (read-modify-write). The bond is read on `accept_intent`, `slash_solver`
+  and `resolve_dispute`, not on fill.
+- A read-only `SolverBondView` therefore would not remove the per-fill
+  deserialization: the counters the fill mutates live in the same record, so
+  the whole record must still be loaded and stored.
+- The only change that removes the full-record read from the fill is to move
+  the mutated counters (`total_volume`, `fills_completed`, `active_intents`)
+  into their own key, e.g. `DataKey::SolverStats(Address)`. That changes the
+  storage layout and every write site of `SolverRecord` (`register_solver`,
+  `deregister_solver`, top-up, `accept_intent`, `slash_solver`,
+  `resolve_dispute`, `solver_registry`), so it needs a migration and is a
+  separate, one-way-door change. It is intentionally not made here.
