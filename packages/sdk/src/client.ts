@@ -141,7 +141,11 @@ export class VortexClient {
   private contract: Contract;
 
   constructor(options: VortexClientOptions) {
-    this.contractId = options.contractId;
+    const { contractId } = options;
+    if (typeof contractId !== 'string' || contractId.length !== 56 || !contractId.startsWith('C')) {
+      throw new types.InvalidContractIdError(String(contractId));
+    }
+    this.contractId = contractId;
     this.horizon = options.horizon;
     this.rpcUrl = options.rpcUrl || 'https://soroban-testnet.stellar.org';
     this.networkPassphrase = options.networkPassphrase || Networks.TESTNET_NETWORK_PASSPHRASE;
