@@ -89,20 +89,17 @@ impl Directory {
 
     /// Look up `name`; traps with `NotFound` if absent.
     pub fn get_address(env: Env, name: Symbol) -> Address {
-        Self::find_address(env.clone(), name)
-            .unwrap_or_else(|| panic_with_error!(&env, Error::NotFound))
+        Self::find_address(env.clone(), name).unwrap_or_else(|e| panic_with_error!(&env, e))
     }
 
-    /// Look up `name`, returning `None` if absent.
-    pub fn find_address(env: Env, name: Symbol) -> Option<Address> {
+    /// Look up `name`, returning `Err(NotFound)` if absent.
+    pub fn find_address(env: Env, name: Symbol) -> Result<Address, Error> {
         let key = DataKey::Entry(name);
-        let v: Option<Address> = env.storage().persistent().get(&key);
-        if v.is_some() {
-            env.storage()
-                .persistent()
-                .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
-        }
-        v
+        let v: Address = env.storage().persistent().get(&key).ok_or(Error::NotFound)?;
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(v)
     }
 
     /// All registered names, in registration order.
