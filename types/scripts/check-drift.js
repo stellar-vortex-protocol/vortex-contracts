@@ -495,6 +495,57 @@ checkStructFields(INTENT_PERIPHERY_RUST_FILE, "SwapResult", [
   "solver",
 ]);
 
+// Every interface/enum exported from src/index.ts. Adding or removing a type
+// requires updating this list, so removals are never silently accepted.
+const EXPECTED_TS_TYPES = [
+  "IntentState",
+  "DisputeResolution",
+  "IntentRecord",
+  "SolverRecord",
+  "ReputationSnapshot",
+  "ErrorCode",
+  "Checkpoint",
+  "VoteType",
+  "ProposalState",
+  "Proposal",
+  "GovernorConfig",
+  "GovernorError",
+  "Stream",
+  "TreasuryStreamsDataKey",
+  "TreasuryStreamsError",
+  "Sink",
+  "FeeRouterConfig",
+  "FeeRouterError",
+  "BackstopPosition",
+  "BackstopVaultConfig",
+  "BackstopVaultError",
+  "BatchIntent",
+  "BatchResult",
+  "IntentPeripheryError",
+];
+
+// Compare the exported TS type names against EXPECTED_TS_TYPES, naming each
+// missing or unlisted type.
+function checkTsTypeSet() {
+  const content = fs.readFileSync(TS_FILE, "utf-8");
+  const actual = [...content.matchAll(/^export (?:interface|enum) (\w+)/gm)].map(
+    (m) => m[1]
+  );
+  EXPECTED_TS_TYPES.forEach((name) => {
+    if (!actual.includes(name)) {
+      console.error(`❌ DRIFT: TS type ${name} missing from ${TS_FILE}`);
+      hasErrors = true;
+    }
+  });
+  actual.forEach((name) => {
+    if (!EXPECTED_TS_TYPES.includes(name)) {
+      console.error(`❌ DRIFT: TS type ${name} in ${TS_FILE} is not in EXPECTED_TS_TYPES`);
+      hasErrors = true;
+    }
+  });
+}
+checkTsTypeSet();
+
 // Summary
 console.log("\n" + "─".repeat(60));
 if (hasErrors) {
