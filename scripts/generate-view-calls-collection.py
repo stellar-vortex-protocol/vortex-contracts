@@ -77,7 +77,7 @@ def create_request_template(contract_name, func_name):
     """Create a Postman request template for a view function."""
     # Derive variable name from contract + function name
     var_name = f"{contract_name}_{func_name}_tx_xdr"
-    entry_name = f"{contract_name}.{func_name}"
+    entry_name = f"{contract_name}_{func_name}"
 
     # Build description with example command (simplified)
     description = f"Build XDR for: stellar contract invoke --id {{{{contract_id}}}} --source {{{{source_account}}}} --network testnet -- {func_name}"
@@ -135,7 +135,7 @@ def update_collection(collection_path, view_functions):
     missing = [
         (contract_name, func_name)
         for contract_name, func_name in view_functions
-        if f"{contract_name}.{func_name}" not in existing_names
+        if f"{contract_name}_{func_name}" not in existing_names
     ]
 
     print(f"Found {len(existing_names)} existing requests in collection")
