@@ -296,6 +296,12 @@ impl TimelockController {
     // Execution
     // ---------------------------------------------------------------------
 
+    /// Execute a ready operation.
+    ///
+    /// Retry policy: there is none. Storage writes and each call run exactly once
+    /// (max 1 attempt); any failure traps and reverts the whole transaction, so a
+    /// permanent error (e.g. insufficient balance) aborts immediately and can never
+    /// loop. Callers wanting a retry must resubmit the transaction.
     pub fn execute(env: Env, id: BytesN<32>) {
         Self::require_role(&env, &EXECUTOR);
 
