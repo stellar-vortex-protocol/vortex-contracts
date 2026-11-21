@@ -519,7 +519,9 @@ impl Governor {
     /// current contract address' stored admin, validated via
     /// `vortex_common::require_admin`.
     pub fn set_config(env: Env, admin: Address, config: GovernorConfig) -> Result<(), GovernorError> {
-        require_admin(&env, &admin).map_err(|_| GovernorError::NotAuthorized)?;
+        admin.require_auth();
+        require_admin(&env, Symbol::new(&env, "admin"), &admin)
+            .map_err(|_| GovernorError::NotAuthorized)?;
         env.storage().instance().set(&Symbol::new(&env, "config"), &config);
         Ok(())
     }
