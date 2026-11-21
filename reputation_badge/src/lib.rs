@@ -155,16 +155,11 @@ impl ReputationBadge {
     /// `solver_registry` contract (issue #512).
     pub fn burn_badge(env: Env, caller: Address, solver: Address) {
         Self::require_admin_or_registry(&env, &caller);
-        if !env
-            .storage()
-            .persistent()
-            .has(&BadgeKey::Badge(solver.clone()))
-        {
+        let key = BadgeKey::Badge(solver.clone());
+        if !env.storage().persistent().has(&key) {
             panic_with_error!(&env, Error::BadgeNotFound);
         }
-        env.storage()
-            .persistent()
-            .remove(&BadgeKey::Badge(solver.clone()));
+        env.storage().persistent().remove(&key);
         env.events()
             .publish((Symbol::new(&env, "badge_burned"), solver), ());
     }
