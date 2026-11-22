@@ -398,6 +398,83 @@
       </div>
     </div>
 
+    <div class="section-title">Backstop Vault</div>
+    <div class="metrics-grid">
+      <div class="card">
+        <h3>Vault Total Assets</h3>
+        <div class="metric-value" id="backstop-total-assets">—</div>
+        <div class="metric-unit">USDC</div>
+        <div class="value-breakdown">Source: <code>backstop_vault.get_vault_state()</code></div>
+      </div>
+
+      <div class="card">
+        <h3>Vault Total Shares</h3>
+        <div class="metric-value" id="backstop-total-shares">—</div>
+        <div class="metric-unit">shares</div>
+      </div>
+
+      <div class="card">
+        <h3>Assets per Share</h3>
+        <div class="metric-value" id="backstop-rate">—</div>
+        <div class="metric-unit">bps (10,000 = 1:1)</div>
+      </div>
+    </div>
+
+    <div class="section-title">Governor</div>
+    <div class="metrics-grid">
+      <div class="card">
+        <h3>Proposals</h3>
+        <div class="metric-value" id="governor-proposal-count">—</div>
+        <div class="metric-unit">total</div>
+        <div class="value-breakdown">Source: <code>governor.get_proposal_count()</code></div>
+      </div>
+
+      <div class="card">
+        <h3>Open Proposals</h3>
+        <div class="metric-value" id="governor-open-count">—</div>
+        <div class="metric-unit">proposals</div>
+        <div class="value-breakdown">Source: <code>governor.list_proposals()</code> filtered by <code>governor.state()</code></div>
+      </div>
+    </div>
+
+    <div class="section-title">Treasury Streams</div>
+    <div class="metrics-grid">
+      <div class="card">
+        <h3>Streams</h3>
+        <div class="metric-value" id="treasury-stream-count">—</div>
+        <div class="metric-unit">streams</div>
+        <div class="value-breakdown">Source: <code>treasury_streams.get_stream_count()</code></div>
+      </div>
+
+      <div class="card">
+        <h3>Vested Total</h3>
+        <div class="metric-value" id="treasury-vested-total">—</div>
+        <div class="metric-unit">USDC</div>
+        <div class="value-breakdown">Pending aggregate enumeration view (per-stream <code>balance_of</code>)</div>
+      </div>
+    </div>
+
+    <div class="section-title">Intent Periphery</div>
+    <div class="metrics-grid">
+      <div class="card">
+        <h3>Protocol Health</h3>
+        <div class="metric-value" id="periphery-health">—</div>
+        <div class="metric-unit">status</div>
+        <div class="value-breakdown">Source: <code>intent_periphery.get_protocol_health()</code> (proxied)</div>
+      </div>
+
+      <div class="card">
+        <h3>Protocol Stats</h3>
+        <div class="metric-value" id="periphery-stats">—</div>
+        <div class="metric-unit">counters</div>
+        <div class="value-breakdown">Source: <code>intent_periphery.get_stats()</code> (proxied)</div>
+      </div>
+    </div>
+
+    <p class="subtitle" style="margin-bottom: 40px;">
+      Module sections are read-only and not yet connected to live RPC reads; values show <code>—</code> until the data layer is wired.
+    </p>
+
     <div class="section-title">Data Source & Reproducibility</div>
     <div class="data-source">
       <strong>How to verify independently:</strong><br>
