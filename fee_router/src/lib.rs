@@ -431,6 +431,22 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_sink_addresses_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, FeeRouter);
+        let client = FeeRouterClient::new(&env, &contract_id);
+        let governance = Address::generate(&env);
+        let dup = Address::generate(&env);
+        let mut sinks = Vec::new(&env);
+        sinks.push_back(Sink { account: dup.clone(), weight_bps: 5_000 });
+        sinks.push_back(Sink { account: Address::generate(&env), weight_bps: 2_000 });
+        sinks.push_back(Sink { account: dup, weight_bps: 3_000 });
+        let res = client.try_initialize(&governance, &100u64, &sinks);
+        assert_eq!(res, Err(Ok(FeeRouterError::DuplicateSink)));
+    }
+
+    #[test]
     fn timelock_enforced() {
         let (env, client, governance, _t, _b, _r) = setup();
         let mut sinks = Vec::new(&env);
