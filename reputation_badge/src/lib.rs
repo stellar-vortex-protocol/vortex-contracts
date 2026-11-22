@@ -148,6 +148,20 @@ impl ReputationBadge {
             .publish((Symbol::new(&env, "badge_minted"), solver), tier);
     }
 
+    /// Update an existing badge to `tier`. Errors with `BadgeNotFound` if the
+    /// solver has no badge (use `mint_badge` to create one).
+    pub fn update_badge(env: Env, caller: Address, solver: Address, tier: Tier) {
+        Self::require_admin_or_registry(&env, &caller);
+        let key = BadgeKey::Badge(solver.clone());
+        if !env.storage().persistent().has(&key) {
+            panic_with_error!(&env, Error::BadgeNotFound);
+        }
+        env.storage().persistent().set(&key, &tier);
+        Self::bump_persistent_ttl(&env, &key);
+        env.events()
+            .publish((Symbol::new(&env, "badge_updated"), solver), tier);
+    }
+
     /// Burn `solver`'s badge (used when a solver drops below the `Bronze`
     /// threshold to `Unranked`). Errors if the solver has no badge.
     ///
