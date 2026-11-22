@@ -35,6 +35,8 @@ pub enum Error {
     NotInitialized = 2,
     NotFound = 3,
     NoPendingAdmin = 4,
+    /// The address is already registered under a different name.
+    AddressAlreadyRegistered = 5,
 }
 
 #[contract]
@@ -51,10 +53,21 @@ impl Directory {
     }
 
     /// Register or update the address stored under `name`. Admin-only.
+    /// Traps with `AddressAlreadyRegistered` if `addr` is already stored
+    /// under a different name (one-to-one mapping).
     pub fn set_address(env: Env, name: Symbol, addr: Address) {
         Self::require_admin(&env);
         Self::bump_instance(&env);
         let key = DataKey::Entry(name.clone());
+        for other in Self::names(&env).iter() {
+            if other != name {
+                let existing: Option<Address> =
+                    env.storage().persistent().get(&DataKey::Entry(other));
+                if existing.as_ref() == Some(&addr) {
+                    panic_with_error!(&env, Error::AddressAlreadyRegistered);
+                }
+            }
+        }
         if !env.storage().persistent().has(&key) {
             let mut names = Self::names(&env);
             names.push_back(name.clone());
