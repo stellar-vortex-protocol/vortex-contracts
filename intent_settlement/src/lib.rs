@@ -2995,6 +2995,16 @@ impl IntentSettlement {
             .set(&DataKey::Solver(solver.clone()), &record);
         Self::bump_solver_ttl(&env, &solver);
 
+        // Keep TotalBonded in step with the withdrawn collateral (issue #231).
+        let total_bonded: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalBonded)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalBonded, &(total_bonded - amount));
+
         let client = token::Client::new(&env, &bond_token);
         client.transfer(&env.current_contract_address(), &solver, &amount);
 
