@@ -277,18 +277,18 @@ data   : (token: Address, multiplier: i128)
 
 #### `solver_registered`
 
-Emitted by `register_solver` after the bond transfer succeeds. Covers both
-first-time registration and subsequent top-ups.
+Emitted by `register_solver` and `register_solver_with_token` after the bond
+transfer succeeds. Covers both first-time registration and subsequent top-ups.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | **topics[0]** | `Symbol` | `"solver_registered"` |
 | **topics[1]** | `Address` | The solver address |
-| **data** | `i128` | `bond_amount` — the incremental deposit (not cumulative total) |
+| **data** | `(Address, i128)` | `(bond_token, bond_amount)` — the token bonded and the incremental deposit (not cumulative total) |
 
 ```
 topics : ("solver_registered", <solver: Address>)
-data   : <bond_amount: i128>
+data   : (<bond_token: Address>, <bond_amount: i128>)
 ```
 
 ---
