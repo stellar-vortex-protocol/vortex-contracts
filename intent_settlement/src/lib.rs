@@ -3746,6 +3746,10 @@ impl IntentSettlement {
         user.require_auth();
         Self::bump_instance_ttl(&env);
 
+        if new_min_dst_amount <= 0 {
+            panic_with_error!(&env, Error::ZeroAmount);
+        }
+
         let now = env.ledger().timestamp();
         Self::check_amendment_cooldown(&env, &user, now);
 
