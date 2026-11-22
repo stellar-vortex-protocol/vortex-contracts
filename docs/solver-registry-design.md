@@ -94,6 +94,8 @@ Reaching 10 000 would require infinite fill volume, which is unreachable.
 
 - Minimum bonds scale roughly 10× between tiers so each tier represents a
   genuine capital commitment.
+- Thresholds are inclusive: a solver whose bond or score exactly equals a
+  tier's minimum qualifies for that tier (`tier_for` uses `>=`).
 - Score thresholds are generous at the bottom (Bronze is only 10%) to give new
   solvers a path in; they steepen near the top where the volume bonus is
   needed.
