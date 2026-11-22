@@ -69,6 +69,9 @@ WEBHOOK_URL=https://your-backend.example.com/vortex/events
 
 # Local Soroban RPC (or testnet/mainnet)
 SOROBAN_RPC_URL=http://localhost:8001
+
+# Port for the health/stats server (default: 3000)
+PORT=3000
 ```
 
 ### 3. Build & Run
@@ -82,7 +85,7 @@ The relay service will:
 - Connect to Soroban RPC
 - Poll for events every 5 seconds
 - Forward events to your webhook with exponential backoff on failure
-- Expose health checks on `http://localhost:3000`
+- Expose health checks on `http://localhost:${PORT}` (default `3000`)
 
 ## Webhook Integration
 
