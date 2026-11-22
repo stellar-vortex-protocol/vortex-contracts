@@ -101,6 +101,11 @@ has only one (`Open`) for both:
 | `Open`, `now >= deadline` | No — no event exists for this | Logically expired, awaiting someone to call `expire_intent` |
 | `Expired` | Yes — `intent_expired` | Materialized, permanently terminal |
 
+**Boundary agreement.** At `now == deadline` the fill path (`check_fill_guards`,
+`begin_fill`, `accept_intent`) rejects with `now >= deadline`, and
+`expire_intent` succeeds because its guard `now < deadline` is false. A fill and
+an expiry therefore can never both be valid in the same ledger.
+
 Consumers that need an accurate "is this intent still actionable" signal
 without polling `get_intent` per-intent must compute row 2 themselves from
 tracked deadlines, as in §3 — they cannot wait for an event that will never
