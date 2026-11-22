@@ -13,6 +13,7 @@ import {
 } from '@stellar/stellar-sdk';
 
 import { VortexClient } from './client';
+import { ContractSpecError } from './types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -187,6 +188,19 @@ describe('VortexClient', () => {
   describe('constructor', () => {
     it('creates a SorobanRpc.Server with the provided URL', () => {
       expect(MockedServer).toHaveBeenCalledWith(RPC_URL);
+    });
+
+    it('throws ContractSpecError with the contract id for a bogus contract id', () => {
+      const bogus = 'not-a-contract-id';
+      let thrown: unknown;
+      try {
+        new VortexClient({ contractId: bogus, rpcUrl: RPC_URL } as any);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(ContractSpecError);
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toContain(bogus);
     });
 
     it('exposes the configured contract id', () => {
