@@ -33,6 +33,11 @@ The **tier-perk enforcement** described in §3, §6 and §7 is now live:
   the solver's live tier. Rationale: the fill window and the slash rate are
   both part of the deal struck at accept-time, so a mid-flight promotion can't
   soften an abandonment and a mid-flight demotion can't harden it.
+- **Registration is create-only:** `register_solver` panics with
+  `SolverAlreadyRegistered` (distinct from `SolverNotRegistered`, used by the
+  update paths) when a record already exists, so a solver cannot reset its
+  bond or stats by registering again. Change an existing record through
+  `stake` / `unstake` instead.
 - **Fee rebate (§8) is not implemented** and is out of scope for #197. It
   overlaps with the volume-based fee discount in #7; the two should be unified
   in one design rather than built twice.
