@@ -26,8 +26,12 @@ Set environment variables before running:
 # Soroban RPC endpoint
 export SOROBAN_RPC_URL="https://soroban-mainnet.stellar.org"
 
-# Contract address to monitor
+# Contract address to monitor (intent_settlement)
 export CONTRACT_ID="C..."
+
+# Other protocol contracts to monitor, comma-separated (optional):
+# backstop_vault, treasury_streams, fee_router, intent_periphery
+export ADDITIONAL_CONTRACT_IDS="C...,C..."
 
 # Stellar network (mainnet | testnet)
 export NETWORK="mainnet"
@@ -67,6 +71,8 @@ node monitoring/vortex-monitor.js
 - **Admin transfer** — `admin_transferred` event
 - **Fee recipient change** — `fee_recipient_proposed` or `fee_recipient_updated` event
 - **Token rescue** — `tokens_rescued` event (any occurrence)
+- **Backstop emergency mode** — `emergency_mode` event from `backstop_vault`
+- **Settlement repointed** — `settlement_updated` event from `intent_periphery`
 
 ### P2 — Escalate
 
@@ -76,12 +82,18 @@ node monitoring/vortex-monitor.js
 - **Paused longer than expected** — Pause persists past maintenance window end
 - **Expiry-rate spike** — Unusual increase in `intent_expired` events
 - **Config churn** — Allowlist or config changes outside maintenance window
+- **Backstop cover** — `cover` event from `backstop_vault` (backstop paid out a loss)
 
 ### P3 — Informational
 
 - **Fill-rate stagnation** — No volume increase over expected window
 - **Extension-granting frequency** — Same intent granted multiple extensions
 - **Repeated slash-cooldown lockouts** — Solvers repeatedly hitting cooldown
+- **Backstop activity** — `deposit`, `withdraw`, `withdraw_queued`, `income_received` from `backstop_vault`
+- **Treasury stream lifecycle** — `create`, `withdraw`, `cancel` from `treasury_streams`
+- **Periphery initialization** — `periphery_initialized` from `intent_periphery`
+
+Note: `fee_router` currently emits no events, so nothing is monitored there yet.
 
 ## Alert Delivery
 

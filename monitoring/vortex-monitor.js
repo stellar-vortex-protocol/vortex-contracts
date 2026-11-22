@@ -27,6 +27,9 @@
 const config = {
   sorobanRpcUrl: process.env.SOROBAN_RPC_URL || "https://soroban-mainnet.stellar.org",
   contractId: process.env.CONTRACT_ID,
+  // Comma-separated IDs of the other protocol contracts (backstop_vault, treasury_streams, ...)
+  additionalContractIds: (process.env.ADDITIONAL_CONTRACT_IDS || "")
+    .split(",").map((id) => id.trim()).filter(Boolean),
   network: process.env.NETWORK || "mainnet",
   pollInterval: parseInt(process.env.POLL_INTERVAL || "60", 10) * 1000, // ms
   alertWebhookUrl: process.env.ALERT_WEBHOOK_URL,
@@ -144,7 +147,7 @@ class EventListener {
           filters: [
             {
               type: "contract",
-              contractIds: [config.contractId],
+              contractIds: [config.contractId, ...config.additionalContractIds],
             },
           ],
         },
@@ -218,6 +221,16 @@ class EventListener {
         eventType: type,
         source: "event",
       });
+    } else if (type === "emergency_mode") {
+      this.alertP1("emergency_mode", "Backstop vault emergency mode toggled", {
+        eventType: type,
+        source: "event",
+      });
+    } else if (type === "settlement_updated") {
+      this.alertP1("settlement_updated", "Intent periphery settlement address changed", {
+        eventType: type,
+        source: "event",
+      });
     }
     // P2 Signals
     else if (type === "solver_slashed") {
@@ -239,10 +252,22 @@ class EventListener {
         });
       }
     }
+    else if (type === "cover") {
+      this.alertP2("backstop_cover", "Backstop vault covered a loss", {
+        eventType: type,
+        source: "event",
+      });
+    }
     // P3 Signals
     else if (type === "extension_granted") {
       this.recordEventInWindow("extension_granted");
       // Check if same intent is granted multiple extensions (P3)
+    } else if (["deposit", "withdraw", "withdraw_queued", "income_received",
+                "create", "cancel", "periphery_initialized"].includes(type)) {
+      this.alertP3(type, `Protocol event: ${type}`, {
+        eventType: type,
+        source: "event",
+      });
     }
   }
 
