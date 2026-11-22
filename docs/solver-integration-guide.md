@@ -343,6 +343,12 @@ What the contract does internally:
 `fill_amount` must be ≥ `min_dst_amount`. Passing exactly `min_dst_amount` is
 valid; passing more improves your reputation stats.
 
+`--solver` must be the same registered solver address that called
+`accept_intent` for this intent. Any other address fails with `Unauthorized`
+(an address that was never registered cannot accept, and gets
+`SolverNotRegistered` there). `fill_amount` is in `dst_token` base units and
+must be > 0.
+
 **Important**: Before calling `fill_intent`, ensure your Stellar keypair has
 authorized the contract to transfer at least `fill_amount + fee` of `dst_token`
 on your behalf (via SEP-41 `approve`, or by signing the fill transaction that

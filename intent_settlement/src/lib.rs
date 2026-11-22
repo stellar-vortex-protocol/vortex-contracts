@@ -3413,6 +3413,24 @@ impl IntentSettlement {
 
     /// Solver fills the intent by sending dst_token to the user.
     ///
+    /// # Parameters
+    ///
+    /// * `solver` - Address of the solver delivering `dst_token`. It must be
+    ///   the solver that previously called `accept_intent` for this intent, and
+    ///   therefore must be a registered solver (see `register_solver`; an
+    ///   unregistered address cannot accept and so can never fill). The solver
+    ///   must authorise the call (scoped to `(solver, intent_id, fill_amount)`).
+    ///   If `solver` is not the solver assigned to the intent, the call panics
+    ///   with `Error::Unauthorized`; an address that is not registered at all is
+    ///   rejected with `Error::SolverNotRegistered` when it tries to accept.
+    /// * `intent_id` - 32-byte ID of an intent in the `Accepted` state whose
+    ///   fill window has not expired.
+    /// * `fill_amount` - Amount of the intent's `dst_token` (in token base
+    ///   units) sent to the user in this fill; must be > 0 (`Error::ZeroAmount`).
+    ///   The protocol fee is deducted from the solver's side, not the user's.
+    /// * `require_proof` - Whether to cross-check a `ProofRegistry` record
+    ///   before moving tokens (see "Proof gating" below).
+    ///
     /// Partial fills are supported: `fill_amount` must be > 0 but may be less
     /// than `min_dst_amount * src_portion / src_amount`.  The intent transitions to `PartiallyFilled` after
     /// each sub-fill and is re-opened so another solver (or the same one) can
