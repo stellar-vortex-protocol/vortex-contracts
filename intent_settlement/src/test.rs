@@ -1540,6 +1540,22 @@ fn fill_zero_amount_fails() {
     assert_eq!(res, Err(Ok(Error::ZeroAmount.into())));
 }
 
+/// #703: every fill rejection goes through `reject_fill`, which publishes
+/// `fill_rejected` (solver topic; intent_id + error code data) before aborting.
+/// Soroban rolls back contract events of a failed call, so this asserts the
+/// typed error from that path and that no event is committed by the failed call.
+#[test]
+fn rejected_fill_emits_no_success_event() {
+    let ctx = setup();
+    ctx.register_solver();
+    let id = ctx.submit();
+    ctx.client().accept_intent(&ctx.solver, &id);
+
+    let res = ctx.client().try_fill_intent(&ctx.solver, &id, &i128::MAX, &false);
+    assert_eq!(res, Err(Ok(Error::AmountTooLarge.into())));
+    assert_eq!(ctx.env.events().all().len(), 0);
+}
+
 #[test]
 fn fill_after_window_fails() {
     let ctx = setup();

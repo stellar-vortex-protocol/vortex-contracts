@@ -3494,15 +3494,15 @@ impl IntentSettlement {
         // `is_intent_fillable` / `check_fill_guards` can never silently drift
         // apart. Issue #259 documents this sharing contract.
         if let Err(e) = Self::check_fill_guards(&intent, &solver, now) {
-            panic_with_error!(&env, e);
+            Self::reject_fill(&env, &solver, &intent_id, e);
         }
 
         if fill_amount <= 0 {
-            panic_with_error!(&env, Error::ZeroAmount);
+            Self::reject_fill(&env, &solver, &intent_id, Error::ZeroAmount);
         }
 
         if fill_amount > MAX_AMOUNT {
-            panic_with_error!(&env, Error::AmountTooLarge);
+            Self::reject_fill(&env, &solver, &intent_id, Error::AmountTooLarge);
         }
 
         // ── Proof gate (issue #190) ─────────────────────────────────────────
@@ -3638,6 +3638,18 @@ impl IntentSettlement {
             (Symbol::new(&env, "intent_filled"), solver),
             (intent_id, fill_amount, fee),
         );
+    }
+
+    /// Emit `fill_rejected` then abort with `err`. Topics: (`fill_rejected`,
+    /// `solver`); data: (`intent_id`, error code as `u32`). Note that Soroban
+    /// discards contract events of a failed invocation, so this is visible in
+    /// the diagnostic events of the failed transaction.
+    fn reject_fill(env: &Env, solver: &Address, intent_id: &BytesN<32>, err: Error) -> ! {
+        env.events().publish(
+            (Symbol::new(env, "fill_rejected"), solver.clone()),
+            (intent_id.clone(), err as u32),
+        );
+        panic_with_error!(env, err)
     }
 
     /// User can cancel an Open (or PartiallyFilled) intent that no solver

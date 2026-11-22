@@ -418,6 +418,30 @@ data   : (intent_id: BytesN<32>, fill_amount: i128, fee: i128)
 
 ---
 
+#### `fill_rejected`
+
+Emitted by `fill_intent` / `batch_fill_intent` immediately before a fill is
+rejected by the fill-window, state, solver-ownership, zero-amount or
+amount-too-large checks. The success event `intent_filled` is unchanged.
+Soroban discards contract events of a failed invocation, so this event is
+visible in the diagnostic events of the failed transaction rather than the
+committed ledger event stream. Rejections from the pause check or an unknown
+intent (which occur before the intent is loaded) do not emit it.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **topics[0]** | `Symbol` | `"fill_rejected"` |
+| **topics[1]** | `Address` | `solver` — the solver whose fill was rejected |
+| **data[0]** | `BytesN<32>` | `intent_id` |
+| **data[1]** | `u32` | `Error` code of the rejection |
+
+```
+topics : ("fill_rejected", <solver: Address>)
+data   : (intent_id: BytesN<32>, error_code: u32)
+```
+
+---
+
 #### `intent_cancelled`
 
 Emitted by `cancel_intent` when the intent owner cancels an Open intent.
