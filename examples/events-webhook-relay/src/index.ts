@@ -7,7 +7,7 @@
  * Issue #139
  */
 
-import express, { Express, Request, Response } from "express";
+import express, { Express, NextFunction, Request, Response } from "express";
 import axios from "axios";
 import pino from "pino";
 import { Server } from "soroban-client";
@@ -128,6 +128,9 @@ export class EventRelay {
    * Setup Express routes
    */
   private setupExpress(): void {
+    // Parse JSON bodies; malformed JSON is reported as a 400 by the error handler below
+    this.app.use(express.json());
+
     // Health check endpoint
     this.app.get("/health", (req: Request, res: Response) => {
       res.json({
@@ -154,6 +157,48 @@ export class EventRelay {
       res.json({ message: "Shutting down..." });
       this.stop();
     });
+
+    // Wrong method on a known route -> 405 with a JSON message
+    const allowed: Record<string, string> = {
+      "/health": "GET",
+      "/stats": "GET",
+      "/shutdown": "POST",
+    };
+    for (const [path, method] of Object.entries(allowed)) {
+      this.app.all(path, (req: Request, res: Response) => {
+        res
+          .status(405)
+          .set("Allow", method)
+          .json({ message: `Method ${req.method} not allowed; use ${method}` });
+      });
+    }
+
+    // Unknown route -> 404 with a JSON message
+    this.app.use((req: Request, res: Response) => {
+      res.status(404).json({ message: `Not found: ${req.method} ${req.path}` });
+    });
+
+    // Error handler: 400 for bad input (e.g. malformed JSON), 500 otherwise
+    this.app.use(
+      (err: any, req: Request, res: Response, _next: NextFunction) => {
+        const status =
+          err?.type === "entity.parse.failed" ||
+          (typeof err?.status === "number" && err.status >= 400 && err.status < 500)
+            ? (err.status ?? 400)
+            : 500;
+        if (status >= 500) {
+          this.logger.error({ error: err }, "Unhandled request error");
+        }
+        res.status(status).json({
+          message:
+            status === 400 && err?.type === "entity.parse.failed"
+              ? "Malformed JSON body"
+              : status >= 500
+                ? "Internal server error"
+                : String(err?.message ?? "Bad request"),
+        });
+      }
+    );
   }
 
   /**

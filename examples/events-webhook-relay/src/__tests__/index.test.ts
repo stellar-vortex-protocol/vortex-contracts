@@ -308,6 +308,35 @@ describe("pollEvents", () => {
   });
 });
 
+// ── error responses ───────────────────────────────────────────────────────
+
+describe("error responses", () => {
+  it("returns 400 with a JSON message on malformed JSON", async () => {
+    const relay = new EventRelay(baseConfig());
+    const res = await request(relay.expressApp)
+      .post("/shutdown")
+      .set("Content-Type", "application/json")
+      .send("{not json");
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty("message");
+  });
+
+  it("returns 405 with a JSON message on wrong method", async () => {
+    const relay = new EventRelay(baseConfig());
+    const res = await request(relay.expressApp).post("/health");
+    expect(res.status).toBe(405);
+    expect(res.headers.allow).toBe("GET");
+    expect(res.body).toHaveProperty("message");
+  });
+
+  it("returns 404 with a JSON message on unknown route", async () => {
+    const relay = new EventRelay(baseConfig());
+    const res = await request(relay.expressApp).get("/nope");
+    expect(res.status).toBe(404);
+    expect(res.body).toHaveProperty("message");
+  });
+});
+
 // ── 6. start / stop ───────────────────────────────────────────────────────
 
 describe("start / stop", () => {
