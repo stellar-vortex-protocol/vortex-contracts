@@ -11,6 +11,12 @@ pub use soroban_sdk::{Address, Env};
 // Issue #505: Named error type instead of `()` so callers can map directly.
 
 /// Shared error type for `vortex-common` helpers.
+///
+/// Soroban `#[contracterror]` enums must be fieldless `u32` variants so they
+/// can cross the contract boundary; context fields cannot be attached to the
+/// variants without changing the ABI. Off-chain diagnostic context (the
+/// offending admin key and caller) is instead emitted via `log!` by the
+/// helpers that return these errors, and shows up in simulation diagnostics.
 #[soroban_sdk::contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -192,8 +198,12 @@ pub fn require_admin(
     .storage()
     .instance()
     .get(&admin_key)
-    .ok_or(CommonError::NotInitialized)?;
+    .ok_or_else(|| {
+      soroban_sdk::log!(env, "require_admin: admin not initialized");
+      CommonError::NotInitialized
+    })?;
   if admin != *caller {
+    soroban_sdk::log!(env, "require_admin: caller is not admin", caller, admin);
     return Err(CommonError::Unauthorized);
   }
   Ok(())

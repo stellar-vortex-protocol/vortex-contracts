@@ -223,6 +223,38 @@ export class EventRelay {
   }
 
   /**
+   * Emit a structured log line for a failed webhook delivery attempt.
+   * Contains the event ID, target URL and failure reason. Successful
+   * deliveries are logged at info level without these fields.
+   */
+  private logDeliveryFailure(
+    event: EventPayload,
+    attempt: number,
+    error: unknown,
+    final: boolean
+  ): void {
+    const reason = axios.isAxiosError(error)
+      ? error.response
+        ? `HTTP ${error.response.status}`
+        : error.code === "ECONNABORTED"
+          ? `timeout: ${error.message}`
+          : error.message
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    this.logger[final ? "error" : "warn"](
+      {
+        eventId: event.id,
+        targetUrl: this.config.webhookUrl,
+        reason,
+        attempt,
+        final,
+      },
+      "Webhook delivery failed"
+    );
+  }
+
+  /**
    * Send event to the webhook URL with retries
    */
   private async relayEvent(
@@ -256,18 +288,12 @@ export class EventRelay {
     } catch (error) {
       if (attempt < this.config.maxRetries) {
         const backoff = this.config.retryBackoffMs * Math.pow(2, attempt - 1);
-        this.logger.warn(
-          { eventId: event.id, attempt, nextRetryMs: backoff, error },
-          "Webhook delivery failed; retrying"
-        );
+        this.logDeliveryFailure(event, attempt, error, false);
 
         await new Promise((resolve) => setTimeout(resolve, backoff));
         await this.relayEvent(event, attempt + 1);
       } else {
-        this.logger.error(
-          { eventId: event.id, attempts: attempt, error },
-          "Webhook delivery failed after max retries; dropping event"
-        );
+        this.logDeliveryFailure(event, attempt, error, true);
         // In production, you might log this to a dead-letter queue
       }
     }

@@ -160,6 +160,11 @@ Run every command in this section and confirm the output matches the expected
 value before proceeding. These commands are all read-only (no fees, no side
 effects).
 
+To run these checks in one pass, use `scripts/check-deployment.sh <CONTRACT_ID>`.
+The script exits non-zero, naming the contract ID it checked, if any lookup
+fails or returns an empty result (for example when the contract is not deployed
+on the selected network). A zero exit means every lookup returned a value.
+
 ### 1. Confirm admin address
 
 ```bash
