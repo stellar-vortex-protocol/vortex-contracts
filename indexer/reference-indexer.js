@@ -662,6 +662,44 @@ async function fetchEvents(contractId, startLedger) {
 }
 
 // ---------------------------------------------------------------------------
+// RPC failure handling
+// ---------------------------------------------------------------------------
+
+/** Exit non-zero after this many consecutive failed fetches (env-overridable). */
+const MAX_CONSECUTIVE_FAILURES = parseInt(process.env.MAX_CONSECUTIVE_FAILURES || "5", 10);
+const RETRY_DELAY_MS = parseInt(process.env.RPC_RETRY_DELAY_MS || "1000", 10);
+
+/**
+ * Call `fetchEvents`, logging every failure with the ledger range attempted and
+ * counting consecutive failures. A successful fetch resets the counter; once
+ * MAX_CONSECUTIVE_FAILURES is reached the error is rethrown so main() exits
+ * non-zero and a supervisor can restart the process.
+ */
+async function fetchEventsBounded(contractId, startLedger, fetchFn = fetchEvents) {
+  let failures = 0;
+  for (;;) {
+    try {
+      const events = await fetchFn(contractId, startLedger);
+      failures = 0;
+      return events;
+    } catch (err) {
+      failures += 1;
+      console.error(
+        `[indexer] RPC fetch failed (ledger range ${startLedger}..latest, ` +
+          `consecutive failures ${failures}/${MAX_CONSECUTIVE_FAILURES}):`,
+        err
+      );
+      if (failures >= MAX_CONSECUTIVE_FAILURES) {
+        throw new Error(
+          `RPC fetch failed ${failures} consecutive times (ledger range ${startLedger}..latest)`
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -671,7 +709,7 @@ async function main() {
 
   console.log(`[indexer] replaying events for contract ${CONTRACT_ID} from ledger ${START_LEDGER}`);
 
-  const events = await fetchEvents(CONTRACT_ID, START_LEDGER);
+  const events = await fetchEventsBounded(CONTRACT_ID, START_LEDGER);
   const indexer = new VortexIndexer();
   indexer.replay(events);
 
@@ -811,4 +849,4 @@ main().catch((err) => {
   process.exit(1);
 });
 
-module.exports = { VortexIndexer, SolverRegistryIndexer };
+module.exports = { VortexIndexer, SolverRegistryIndexer, fetchEventsBounded };
