@@ -840,3 +840,42 @@ fn failure_reason_missing_proof_is_proof_not_found() {
         Err(Ok(Error::ProofNotFound.into()))
     );
 }
+
+// ─── verify_proof_checked (issue #676) ──────────────────────────────────────
+
+#[test]
+fn verify_proof_checked_ok_returns_record() {
+    let ctx = setup();
+    let id = receive_valid_proof(&ctx, 30);
+    let rec = ctx.client().verify_proof_checked(&id, &2);
+    assert_eq!(rec.intent_id, id);
+    assert_eq!(rec.src_amount, 1_000);
+}
+
+#[test]
+fn verify_proof_checked_each_failure_maps_to_distinct_variant() {
+    let ctx = setup();
+    let c = ctx.client();
+    let id = receive_valid_proof(&ctx, 31);
+
+    // Unknown intent.
+    let unknown = make_intent_id(&ctx.env, 99);
+    assert_eq!(
+        c.try_verify_proof_checked(&unknown, &2),
+        Err(Ok(Error::ProofNotFound.into()))
+    );
+    // Wrong chain.
+    assert_eq!(
+        c.try_verify_proof_checked(&id, &30),
+        Err(Ok(Error::EmitterChainMismatch.into()))
+    );
+    // Expired.
+    ctx.env.ledger().with_mut(|li| li.timestamp += crate::PROOF_VALIDITY_WINDOW + 1);
+    assert_eq!(
+        c.try_verify_proof_checked(&id, &2),
+        Err(Ok(Error::ProofStale.into()))
+    );
+    // Legacy bool interface unchanged.
+    assert!(c.has_proof(&id));
+    assert!(!c.has_proof(&unknown));
+}

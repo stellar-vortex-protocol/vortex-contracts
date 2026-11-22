@@ -579,6 +579,37 @@ impl ProofRegistry {
         record
     }
 
+    /// Issue #676 — non-panicking, typed verification of a stored proof for
+    /// `intent_id` against the chain the caller expects (`expected_chain_id`,
+    /// a Wormhole chain ID). Unlike `has_proof` (a bare `bool`, kept as the
+    /// stable boolean interface) this tells the caller *why* it failed:
+    ///
+    /// * `Error::ProofNotFound` — no proof was received;
+    /// * `Error::ProofStale` — proof older than `PROOF_VALIDITY_WINDOW`;
+    /// * `Error::EmitterChainMismatch` — proof's `src_chain_id` differs from
+    ///   `expected_chain_id`.
+    ///
+    /// Returns the `ProofRecord` on success. Callers receive the error as a
+    /// `Result` (via `try_verify_proof_checked`) instead of a contract trap.
+    pub fn verify_proof_checked(
+        env: Env,
+        intent_id: BytesN<32>,
+        expected_chain_id: u32,
+    ) -> Result<ProofRecord, Error> {
+        let record: ProofRecord = env
+            .storage()
+            .persistent()
+            .get(&ProofKey::Proof(intent_id))
+            .ok_or(Error::ProofNotFound)?;
+        if env.ledger().timestamp().saturating_sub(record.received_at) > PROOF_VALIDITY_WINDOW {
+            return Err(Error::ProofStale);
+        }
+        if record.src_chain_id != expected_chain_id {
+            return Err(Error::EmitterChainMismatch);
+        }
+        Ok(record)
+    }
+
     // ── Test Back-Door ────────────────────────────────────────────────────────
 
     /// **Test-only** (`testutils` feature): insert a `ProofRecord` directly,

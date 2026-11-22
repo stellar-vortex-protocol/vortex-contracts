@@ -169,6 +169,19 @@ an operator or caller can tell the cases apart:
 
 The success path is unchanged.
 
+`has_proof` remains the stable `bool` interface. Callers that need the failure
+reason use the typed sibling (issue #676), added non-breakingly:
+
+```rust
+/// Err(ProofNotFound) | Err(ProofStale) | Err(EmitterChainMismatch)
+fn verify_proof_checked(env: Env, intent_id: BytesN<32>, expected_chain_id: u32)
+    -> Result<ProofRecord, Error>;
+```
+
+`intent_settlement::fill_intent` continues to map these cases to its own
+`ProofNotFound` / `ProofChainMismatch` codes (see
+[129](./129-proof-mismatch-fallback.md)); it needs no change.
+
 ---
 
 ## 4. Changes to `intent_settlement`
