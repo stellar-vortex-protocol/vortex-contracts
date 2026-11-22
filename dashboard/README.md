@@ -52,6 +52,13 @@ The dashboard queries:
 
 3. **`get_treasury()`** — for treasury balance (once issue #37 deploys)
 
+4. **Module sections** (read-only; shown as `—` until the RPC data layer is wired)
+   - **`backstop_vault.get_vault_state()`** — `(total_assets, total_shares, assets_per_share_bps)`
+   - **`governor.get_proposal_count()`**, **`governor.list_proposals(start, limit)`**, and **`governor.state(id)`** — proposal totals and open proposals
+   - **`treasury_streams.get_stream_count()`** — stream count; aggregate vested totals need the enumeration view (per-stream `balance_of`)
+   - **`intent_periphery.get_protocol_health()`** and **`intent_periphery.get_stats()`** — proxied health and stats
+   - `fee_router` and `intent_periphery`'s `get_dashboard_snapshot()` have no dashboard section yet
+
 ## Building & Development
 
 ### Local Testing
