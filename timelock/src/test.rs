@@ -214,6 +214,30 @@ fn schedule_below_min_delay_panics() {
 }
 
 #[test]
+fn schedule_with_zero_target_is_rejected_and_stores_nothing() {
+    let h = setup();
+    let zero = Address::from_str(
+        &h.env,
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    );
+    let function = Symbol::new(&h.env, "set_value");
+    let args: Vec<Val> = (1u32,).into_val(&h.env);
+    let predecessor = BytesN::from_array(&h.env, &[0u8; 32]);
+    let salt = BytesN::from_array(&h.env, &[1u8; 32]);
+
+    let res = h
+        .client
+        .try_schedule(&zero, &function, &args, &predecessor, &salt, &MIN_DELAY);
+    assert_eq!(res, Err(Ok(TimelockError::ZeroTargetAddress)));
+
+    // No operation was written under the id this call would have produced.
+    let mut calls = Vec::new(&h.env);
+    calls.push_back(Call { target: zero, function, args });
+    let id = h.client.hash_operation(&calls, &predecessor, &salt);
+    assert_eq!(h.client.get_operation_state(&id), OperationState::Unset);
+}
+
+#[test]
 fn cancel_prevents_execution() {
     let h = setup();
     let args = (7u32,).into_val(&h.env);
