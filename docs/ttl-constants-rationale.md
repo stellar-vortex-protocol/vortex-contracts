@@ -1,5 +1,40 @@
 # Storage TTL Constants — Rationale
 
+## Current source-of-truth values
+
+The following table is the operational reference. Values are in ledgers;
+`17,280` is the repository's five-second-ledger day assumption. Contract code,
+not the narrative below, is authoritative when these differ.
+
+| Crate | Constant | Current value | Defined in |
+|---|---|---:|---|
+| `intent_settlement` | `DAY_IN_LEDGERS` | 17,280 | `intent_settlement/src/lib.rs` |
+| `intent_settlement` | `PERSISTENT_TTL_THRESHOLD` | 241,920 (14 days) | `intent_settlement/src/lib.rs` |
+| `intent_settlement` | `PERSISTENT_TTL_EXTEND_TO` | 518,400 (30 days) | `intent_settlement/src/lib.rs` |
+| `intent_settlement` | `INSTANCE_TTL_THRESHOLD` | 518,400 (30 days) | `intent_settlement/src/lib.rs` |
+| `intent_settlement` | `INSTANCE_TTL_EXTEND_TO` | 1,036,800 (60 days) | `intent_settlement/src/lib.rs` |
+| `proof_registry` | `DAY_IN_LEDGERS` | 17,280 | `proof_registry/src/lib.rs` |
+| `proof_registry` | `INSTANCE_TTL_THRESHOLD` | 17,280 (1 day) | `proof_registry/src/lib.rs` |
+| `proof_registry` | `INSTANCE_TTL_EXTEND_TO` | 518,400 (30 days) | `proof_registry/src/lib.rs` |
+| `proof_registry` | `PROOF_TTL_THRESHOLD` | 17,280 (1 day) | `proof_registry/src/lib.rs` |
+| `proof_registry` | `PROOF_TTL_EXTEND_TO` | 518,400 (30 days) | `proof_registry/src/lib.rs` |
+| `solver_registry` | `PERSISTENT_TTL_THRESHOLD` | 241,920 (14 days) | `vortex-common/src/lib.rs` (imported by `solver_registry/src/lib.rs`) |
+| `solver_registry` | `PERSISTENT_TTL_EXTEND_TO` | 518,400 (30 days) | `vortex-common/src/lib.rs` (imported by `solver_registry/src/lib.rs`) |
+| `solver_registry` | `INSTANCE_TTL_THRESHOLD` | 518,400 (30 days) | `vortex-common/src/lib.rs` (imported by `solver_registry/src/lib.rs`) |
+| `solver_registry` | `INSTANCE_TTL_EXTEND_TO` | 1,036,800 (60 days) | `vortex-common/src/lib.rs` (imported by `solver_registry/src/lib.rs`) |
+| `directory` | `TTL_THRESHOLD` | 518,400 (30 days) | `directory/src/lib.rs` |
+| `directory` | `TTL_EXTEND_TO` | 1,555,200 (90 days) | `directory/src/lib.rs` |
+| `backstop_vault` | `PERSISTENT_TTL_THRESHOLD` | 241,920 (14 days) | `vortex-common/src/lib.rs` (imported by `backstop_vault/src/lib.rs`) |
+| `backstop_vault` | `PERSISTENT_TTL_EXTEND_TO` | 518,400 (30 days) | `vortex-common/src/lib.rs` (imported by `backstop_vault/src/lib.rs`) |
+| `backstop_vault` | `INSTANCE_TTL_THRESHOLD` | 518,400 (30 days) | `vortex-common/src/lib.rs` (imported by `backstop_vault/src/lib.rs`) |
+| `backstop_vault` | `INSTANCE_TTL_EXTEND_TO` | 1,036,800 (60 days) | `vortex-common/src/lib.rs` (imported by `backstop_vault/src/lib.rs`) |
+
+For the storage-layout trade-off, see
+[the instance-storage review](144-instance-storage-layout-review.md). For the
+operational effect of these thresholds, see
+[the TTL bump-frequency review](145-ttl-bump-frequency-review.md); this page
+does not duplicate either analysis.
+
 This document explains the four TTL constants defined at the top of
 `intent_settlement/src/lib.rs` (lines 27–35), why their specific values were
 chosen, and the trade-offs involved for anyone tuning them.

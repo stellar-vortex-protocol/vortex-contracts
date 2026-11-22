@@ -20,7 +20,11 @@ SEP-41 address. This document covers the source-chain side only.
 
 ## 2. Canonical `src_chain` Strings
 
-These are the values the contract recognises via `add_allowed_src_chain()`:
+These are the eight canonical names accepted by
+`src_chain_to_wormhole_id`/`wormhole_chain_id` in
+`intent_settlement/src/lib.rs`. They are the only names that can be mapped to
+a Wormhole proof chain ID; all other names fail closed with
+`SrcChainNotSupported`.
 
 | `src_chain` value | Network | Chain type | Wormhole chain ID | Status |
 |---|---|---|---|---|
@@ -35,6 +39,13 @@ These are the values the contract recognises via `add_allowed_src_chain()`:
 
 > **Case-sensitive.** The contract stores and compares these strings literally.
 > `"Ethereum"` and `"ETHEREUM"` are not the same as `"ethereum"`.
+
+> **Allowlist versus canonical validation.** `add_allowed_src_chain` itself
+> stores the supplied string and does not constrain it to this table. That is
+> not proof that a name is supported: a configured-but-unmapped name can pass
+> the optional submission allowlist but is rejected as soon as the contract
+> needs its canonical Wormhole ID. Deployment tooling must therefore use only
+> the eight names above when configuring the allowlist.
 
 > **On-chain `src_token` format validation** (`validate_src_token`, #127) runs
 > for `"ethereum"`, `"base"`, `"polygon"`, `"arbitrum"`, `"optimism"` (EVM
