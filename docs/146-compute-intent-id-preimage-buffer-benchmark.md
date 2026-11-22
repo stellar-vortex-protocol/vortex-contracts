@@ -8,22 +8,36 @@ resource-benchmarking harness (see [docs/149](149-resource-cost-per-entrypoint.m
 
 ## 1. Current implementation
 
+> **Updated (#685).** This review was written against the original
+> timestamp-based preimage. `compute_intent_id` is now the client-computable
+> v1 scheme specified in
+> [CLIENT_COMPUTABLE_INTENT_IDS.md](CLIENT_COMPUTABLE_INTENT_IDS.md); the
+> analysis below is adjusted to it. The conclusion is unchanged.
+
 `compute_intent_id` (`intent_settlement/src/lib.rs`) builds its SHA-256
-preimage as:
+preimage in two steps:
 
 ```rust
-let mut preimage = Bytes::new(env);
-preimage.append(&user.clone().to_xdr(env));       // host call + to_xdr
-preimage.append(&src_chain.clone().to_xdr(env));  // host call + to_xdr
-preimage.extend_from_array(&amount.to_be_bytes());     // host call, 16 B
-preimage.extend_from_array(&timestamp.to_be_bytes());  // host call, 8 B
-preimage.extend_from_array(&nonce.to_be_bytes());      // host call, 8 B
-env.crypto().sha256(&preimage).into()                  // host call
+let mut params = Bytes::new(env);
+params.append(&src_chain.clone().to_xdr(env));      // host call + to_xdr
+params.extend_from_array(&src_amount.to_be_bytes());     // host call, 16 B
+params.append(&dst_token.clone().to_xdr(env));      // host call + to_xdr
+params.extend_from_array(&min_dst_amount.to_be_bytes()); // host call, 16 B
+let params_hash: BytesN<32> = env.crypto().sha256(&params).into();
+
+let mut preimage = Bytes::from_slice(env, b"vortex-intent-v1");
+preimage.append(&env.current_contract_address().to_xdr(env)); // to_xdr
+preimage.append(&env.ledger().network_id().into());           // 32 B
+preimage.append(&user.clone().to_xdr(env));                   // to_xdr
+preimage.extend_from_array(&nonce.to_be_bytes());             // 8 B
+preimage.append(&params_hash.into());                         // 32 B
+env.crypto().sha256(&preimage).into()
 ```
 
-Preimage size ≈ 40 (`Address` XDR) + ~12–20 (`String` XDR) + 32 (the three
-integers) ≈ **~85–95 bytes**, and it is **variable-length** because the
-`Address` and `String` XDR encodings vary.
+The final preimage is variable-length: 16 + 40 (contract) + 32 + 40/44
+(user) + 8 + 32, about 170 bytes, plus an inner `params` hash input of about
+85-100 bytes. Two SHA-256 host calls and four `to_xdr` host calls remain
+regardless of how the integers are packed.
 
 ## 2. Why a fixed-size stack buffer does not cleanly apply
 
@@ -37,16 +51,18 @@ So a `[u8; N]` buffer:
 - cannot be truly fixed-size because those two lengths vary — it would need
   to be over-provisioned to a worst-case `N` plus a length cursor.
 
-The only part that genuinely collapses is the **three integer appends**:
-`amount` (16) + `timestamp` (8) + `nonce` (8) can be packed into one
-`[u8; 32]` guest-side and appended with a single `extend_from_array`,
-removing **2 host calls** out of roughly 8.
+The only part that genuinely collapses is the **integer appends**:
+`src_amount` (16) + `min_dst_amount` (16) are separated by `dst_token`'s
+XDR in `params`, so they cannot be merged into one array without reordering
+the (now client-specified) preimage, which would change every id. The
+`nonce` append (8 B) is the only trailing integer. The cheap win this
+review originally described therefore no longer exists in the same form.
 
 ## 3. Expected effect
 
-The dominant cost in this function is `sha256` over ~90 bytes plus the two
-`to_xdr` host calls, all of which remain. Removing 2 of ~8 host boundary
-crossings for the integer packing is a sub-1% change to the function, and
+The dominant cost in this function is the two `sha256` calls plus the four
+`to_xdr` host calls, all of which remain. Any integer packing would remove
+at most one or two host boundary crossings, a sub-1% change, and
 `compute_intent_id` is itself a small fraction of `submit_intent` (which
 also does a persistent `IntentRecord` write, nonce read/write, and instance
 bookkeeping).
@@ -61,8 +77,7 @@ and A/B comparison cannot be produced on this branch.
 
 ## 5. Recommendation
 
-**No change.** The candidate optimisation (packing the three trailing
-integers into one append) is small, its benefit is unmeasurable without the
+**No change.** The candidate optimisation (packing integer appends) is small, its benefit is unmeasurable without the
 harness, and it trades the current straightforwardly-readable preimage build
 for a length-cursor buffer. Revisit only if the harness lands **and** a
 measurement shows a real instruction-count win on `submit_intent`.
