@@ -205,6 +205,10 @@ pub enum Error {
     /// Issue #408 — `get_fresh_proof` found a proof that has exceeded
     /// `PROOF_VALIDITY_WINDOW` since it was received.
     ProofStale = 12,
+    /// Issue #702 — no authorized emitter / source is configured for the
+    /// message's source chain at all (distinct from `EmitterNotAuthorized`,
+    /// where the chain is configured but the emitter does not match).
+    UnsupportedChain = 13,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -344,7 +348,8 @@ impl ProofRegistry {
     /// Fails closed:
     /// * malformed VAA / bad signature set → traps inside the Wormhole Core
     ///   call, reverting this call;
-    /// * `Error::EmitterNotAuthorized` — envelope emitter not on the allowlist;
+    /// * `Error::UnsupportedChain` — no emitter configured for the envelope's chain;
+    /// * `Error::EmitterNotAuthorized` — envelope emitter not the one authorized for its chain;
     /// * `Error::EmitterChainMismatch` — payload chain ≠ signed emitter chain;
     /// * `Error::InvalidPayload` — payload not exactly 102 bytes;
     /// * `Error::ProofAlreadyExists` / `Error::VaaAlreadyProcessed` — replay.
@@ -365,7 +370,7 @@ impl ProofRegistry {
             .storage()
             .instance()
             .get(&ProofKey::AuthorizedEmitter(envelope.emitter_chain))
-            .unwrap_or_else(|| panic_with_error!(&env, Error::EmitterNotAuthorized));
+            .unwrap_or_else(|| panic_with_error!(&env, Error::UnsupportedChain));
         if authorized != envelope.emitter_address {
             panic_with_error!(&env, Error::EmitterNotAuthorized);
         }
@@ -481,7 +486,7 @@ impl ProofRegistry {
                 panic_with_error!(&env, Error::EmitterNotAuthorized);
             }
         } else {
-            panic_with_error!(&env, Error::EmitterNotAuthorized);
+            panic_with_error!(&env, Error::UnsupportedChain);
         }
 
         // Decode intent_id (bytes 0..32).

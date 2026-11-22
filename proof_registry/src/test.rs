@@ -311,12 +311,12 @@ fn receive_message_axelar_rejects_unconfigured_and_removed_chain() {
     let payload = Bytes::from_slice(&ctx.env, &make_payload(&intent_id, 2, 5_000));
 
     let res = c.try_receive_message_axelar(&chain, &source, &payload);
-    assert_eq!(res, Err(Ok(Error::EmitterNotAuthorized.into())));
+    assert_eq!(res, Err(Ok(Error::UnsupportedChain.into())));
 
     c.set_authorized_axelar_source(&chain, &source);
     c.remove_authorized_axelar_source(&chain);
     let res = c.try_receive_message_axelar(&chain, &source, &payload);
-    assert_eq!(res, Err(Ok(Error::EmitterNotAuthorized.into())));
+    assert_eq!(res, Err(Ok(Error::UnsupportedChain.into())));
     assert!(!c.has_proof(&intent_id));
 }
 
@@ -442,7 +442,7 @@ fn receive_message_rejects_when_no_emitter_configured_for_chain() {
     let vaa = build_vaa(&ctx.env, 30, &emitter_addr(&ctx.env, 0xaa), 1, &payload);
 
     let res = c.try_receive_message(&vaa);
-    assert_eq!(res, Err(Ok(Error::EmitterNotAuthorized.into())));
+    assert_eq!(res, Err(Ok(Error::UnsupportedChain.into())));
 }
 
 // ─── receive_message: tampered payload ─────────────────────────────────────
@@ -784,3 +784,59 @@ mod proptest_payload {
             amount in any::<i128>(),
             sequence in any::<u64>(),
        
+
+// ─── Typed failure reasons (issue #702) ─────────────────────────────────────
+
+/// Receive a valid proof on chain 2 and return its intent id.
+fn receive_valid_proof(ctx: &Ctx, seed: u8) -> BytesN<32> {
+    let c = ctx.client();
+    let emitter = emitter_addr(&ctx.env, 0x11);
+    c.set_authorized_emitter(&2, &emitter);
+    let intent_id = make_intent_id(&ctx.env, seed);
+    let payload = make_payload(&intent_id, 2, 1_000);
+    c.receive_message(&build_vaa(&ctx.env, 2, &emitter, 1, &payload));
+    intent_id
+}
+
+#[test]
+fn failure_reasons_unsupported_chain_vs_unauthorized_emitter_are_distinct() {
+    let ctx = setup();
+    let c = ctx.client();
+    c.set_authorized_emitter(&2, &emitter_addr(&ctx.env, 0xaa));
+    let id = make_intent_id(&ctx.env, 20);
+
+    // Chain 2 is configured but the emitter is wrong.
+    let p = make_payload(&id, 2, 1);
+    let res = c.try_receive_message(&build_vaa(&ctx.env, 2, &emitter_addr(&ctx.env, 0xbb), 1, &p));
+    assert_eq!(res, Err(Ok(Error::EmitterNotAuthorized.into())));
+
+    // Chain 30 has no configured emitter at all.
+    let p = make_payload(&id, 30, 1);
+    let res = c.try_receive_message(&build_vaa(&ctx.env, 30, &emitter_addr(&ctx.env, 0xaa), 2, &p));
+    assert_eq!(res, Err(Ok(Error::UnsupportedChain.into())));
+}
+
+#[test]
+fn failure_reason_expired_proof_is_proof_stale() {
+    let ctx = setup();
+    let c = ctx.client();
+    let id = receive_valid_proof(&ctx, 21);
+
+    // Inclusive boundary: still fresh.
+    ctx.env.ledger().with_mut(|li| li.timestamp += crate::PROOF_VALIDITY_WINDOW);
+    assert_eq!(c.get_fresh_proof(&id).intent_id, id);
+
+    // One second later: expired, with a typed reason.
+    ctx.env.ledger().with_mut(|li| li.timestamp += 1);
+    assert_eq!(c.try_get_fresh_proof(&id), Err(Ok(Error::ProofStale.into())));
+}
+
+#[test]
+fn failure_reason_missing_proof_is_proof_not_found() {
+    let ctx = setup();
+    let id = make_intent_id(&ctx.env, 22);
+    assert_eq!(
+        ctx.client().try_get_fresh_proof(&id),
+        Err(Ok(Error::ProofNotFound.into()))
+    );
+}
