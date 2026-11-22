@@ -22,7 +22,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, BytesN,
-    Env, Symbol, Vec,
+    Env, String, Symbol, Vec,
 };
 use vortex_common::{
     DAY_IN_LEDGERS, INSTANCE_TTL_EXTEND_TO, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO,
@@ -124,6 +124,9 @@ pub enum DataKey {
     TotalSolvers,
     /// Persistent: per-solver record.
     Solver(Address),
+    /// Persistent: metadata URI (`String`) supplied via
+    /// `register_solver_with_metadata`.
+    SolverMetadata(Address),
     /// Persistent: presence means the write `action` (`fill`, `failure` or
     /// `slash`) was already applied for `intent_id` (issue #390). Makes each
     /// settlement write exactly-once per intent.
@@ -218,6 +221,8 @@ pub enum Error {
     /// `unstake` / `deregister_solver` attempted while the solver still holds
     /// open obligations in settlement (issue #542).
     OpenObligations = 19,
+    /// `register_solver_with_metadata` called with an empty metadata URI.
+    EmptyMetadataUri = 20,
 }
 
 // ─── Reputation formula ──────────────────────────────────────────────────────
@@ -546,6 +551,36 @@ impl SolverRegistry {
 
         env.events()
             .publish((Symbol::new(&env, "solver_registered"), solver), bond_amount);
+    }
+
+    /// Register as a solver and record an off-chain metadata URI. Rejects an
+    /// empty `metadata_uri` with [`Error::EmptyMetadataUri`] before any state
+    /// is written or bond pulled; otherwise behaves like [`Self::register_solver`].
+    pub fn register_solver_with_metadata(
+        env: Env,
+        solver: Address,
+        bond_amount: i128,
+        metadata_uri: String,
+    ) {
+        if metadata_uri.is_empty() {
+            panic_with_error!(&env, Error::EmptyMetadataUri);
+        }
+        Self::register_solver(env.clone(), solver.clone(), bond_amount);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SolverMetadata(solver.clone()), &metadata_uri);
+        env.storage().persistent().extend_ttl(
+            &DataKey::SolverMetadata(solver),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND_TO,
+        );
+    }
+
+    /// Metadata URI recorded at registration, if any.
+    pub fn get_metadata_uri(env: Env, solver: Address) -> Option<String> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SolverMetadata(solver))
     }
 
     /// Add `amount` to an existing solver's bond.
