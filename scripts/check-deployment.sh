@@ -123,9 +123,10 @@ query_view() {
 
   echo -n "${label}: "
   if result=$(stellar contract invoke "${STELLAR_ARGS[@]}" -- "${view_name}" 2>&1); then
+    [[ -n "${result}" ]] || die "Empty result for ${view_name}: contract ${CONTRACT_ID} is not deployed on ${NETWORK}"
     echo "${result}"
   else
-    die "Query failed for ${view_name}: ${result}"
+    die "Query failed for ${view_name} on contract ${CONTRACT_ID} (${NETWORK}): ${result}"
   fi
 }
 
@@ -140,9 +141,10 @@ query_view "is_dst_allowlist_enabled" "Allowlist enabled"
 echo -n "Stats:            "
 if result=$(stellar contract invoke "${STELLAR_ARGS[@]}" -- get_stats 2>&1); then
   # The result is printed as a tuple; no post-processing needed
+  [[ -n "${result}" ]] || die "Empty result for get_stats: contract ${CONTRACT_ID} is not deployed on ${NETWORK}"
   echo "${result}"
 else
-  die "Query failed for get_stats: ${result}"
+  die "Query failed for get_stats on contract ${CONTRACT_ID} (${NETWORK}): ${result}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -160,6 +162,7 @@ query_contract_view() {
       --network "${NETWORK}" \
       ${SOURCE_KEY:+--source "${SOURCE_KEY}"} \
       -- "${view_name}" 2>&1); then
+    [[ -n "${result}" ]] || die "Empty result for ${label} (${view_name}): contract ${contract_id} is not deployed on ${NETWORK}"
     echo "${result}"
   else
     die "Query failed for ${label} (${view_name} on ${contract_id}): ${result}"
