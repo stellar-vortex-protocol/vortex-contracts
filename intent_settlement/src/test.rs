@@ -1553,6 +1553,33 @@ fn fill_after_window_fails() {
     assert_eq!(res, Err(Ok(Error::FillWindowExpired.into())));
 }
 
+/// Boundary (#707): a fill at exactly the deadline second is expired.
+#[test]
+fn fill_at_exact_deadline_fails() {
+    let ctx = setup();
+    ctx.register_solver();
+    let id = ctx.submit();
+    ctx.client().accept_intent(&ctx.solver, &id);
+
+    ctx.pass_time(FILL_WINDOW);
+    ctx.dst_admin().mint(&ctx.solver, &FILL);
+    let res = ctx.client().try_fill_intent(&ctx.solver, &id, &FILL, &false);
+    assert_eq!(res, Err(Ok(Error::FillWindowExpired.into())));
+}
+
+/// Boundary (#707): one ledger second before the deadline still fills.
+#[test]
+fn fill_one_second_before_deadline_succeeds() {
+    let ctx = setup();
+    ctx.register_solver();
+    let id = ctx.submit();
+    ctx.client().accept_intent(&ctx.solver, &id);
+
+    ctx.pass_time(FILL_WINDOW - 1);
+    ctx.dst_admin().mint(&ctx.solver, &FILL);
+    ctx.client().fill_intent(&ctx.solver, &id, &FILL, &false);
+}
+
 #[test]
 fn fill_by_wrong_solver_fails() {
     let ctx = setup();
