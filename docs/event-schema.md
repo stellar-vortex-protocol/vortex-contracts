@@ -893,3 +893,37 @@ exclusively through return values and the caller's own event layer.
 
 If `fee_router` is later promoted to a standalone Soroban contract, this
 section will be updated with its event schema.
+
+---
+
+# Event Schema — `timelock` rejection events
+
+> Added in issue #704. Source of truth: `timelock/src/lib.rs` (`reject`).
+
+Success events (`scheduled`, `cancelled`, `executed`) are unchanged. Each
+rejection in `schedule_batch` (and therefore `schedule`) and `execute` first
+publishes one of the events below, then aborts with the same `TimelockError`.
+Role failures (`Unauthorized`) are not covered: they occur before an operation
+ID is known.
+
+> **Note:** Soroban discards contract events of a failed invocation, so these
+> events appear in the diagnostic events of the failed transaction, not in the
+> committed ledger event stream.
+
+#### `schedule_rejected` / `execute_rejected`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **topics[0]** | `Symbol` | `"schedule_rejected"` or `"execute_rejected"` |
+| **topics[1]** | `BytesN<32>` | `id` — the operation ID |
+| **data** | `u32` | `TimelockError` code (the rejection reason) |
+
+```
+topics : ("schedule_rejected" | "execute_rejected", <id: BytesN<32>>)
+data   : <error_code: u32>
+```
+
+| Entrypoint | Reasons (`TimelockError`) |
+|------------|---------------------------|
+| `schedule` / `schedule_batch` | `InsufficientDelay` (2), `AlreadyScheduled` (3), `InvalidPredecessor` (9) |
+| `execute` | `UnknownOperation` (7), `AlreadyDone` (6), `NotReady` (5), `Expired` (10), `UnmetPredecessor` (8), `InvalidPredecessor` (9) |
