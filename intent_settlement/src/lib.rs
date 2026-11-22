@@ -2392,6 +2392,10 @@ impl IntentSettlement {
     /// Emits `chain_onboarding_proposed(name, wormhole_id, eta)`.
     pub fn propose_chain_onboarding(env: Env, config: ChainConfig) {
         Self::require_admin(&env);
+        // Wormhole chain IDs are u16; a larger value can never match a VAA.
+        if config.wormhole_id > u16::MAX as u32 {
+            panic_with_error!(&env, Error::InvalidConfig);
+        }
         let eta = env.ledger().timestamp() + ADMIN_TIMELOCK_DELAY;
         env.storage()
             .instance()
