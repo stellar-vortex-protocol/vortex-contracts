@@ -1,11 +1,12 @@
 # Vortex Contracts — justfile
 #
 # Alternative to the Makefile using `just` (https://just.systems/).
-# All recipes mirror the Makefile exactly; use whichever tool you prefer.
+# `just all` delegates to `make all` so both tools run the same workspace-wide
+# checks; the other recipes operate on intent_settlement (and proof_registry).
 #
 # Usage:
 #   just          — list available recipes
-#   just all      — fmt + lint + test + build
+#   just all      — runs `make all` (fmt + lint + test + build across all crates)
 #   just fmt      — format source
 #   just lint     — clippy -D warnings (identical to CI)
 #   just test     — run tests
@@ -29,8 +30,9 @@ pr_wasm_out := proof_registry / "target" / wasm_target / "release/vortex_proof_r
 default:
     @just --list
 
-# Run fmt, lint, test, and build (full pre-push check)
-all: fmt lint test build
+# Run the full pre-push check across all crates (delegates to `make all`)
+all:
+    make all
 
 # Full check for proof_registry
 proof-registry-all: proof-registry-fmt proof-registry-lint proof-registry-test proof-registry-build
