@@ -342,6 +342,22 @@ Logs are emitted to stdout (pino format):
 }
 ```
 
+Failed deliveries emit a structured line (`warn` while retrying, `error` after
+the final attempt) containing the event ID, target URL and failure reason.
+Successful deliveries are logged only at `info` without these fields:
+
+```json
+{
+  "level": 40,
+  "msg": "Webhook delivery failed",
+  "eventId": "evt-123",
+  "targetUrl": "https://example.com/hook",
+  "reason": "HTTP 500",
+  "attempt": 1,
+  "final": false
+}
+```
+
 Set `LOG_LEVEL` for different verbosity:
 
 ```bash
