@@ -6,7 +6,7 @@ This document describes an off-chain community-nomination and -endorsement proce
 
 **Scope & Governance Context:**
 
-- **No on-chain arbiter registry or panel contract currently exists.** Dispute resolution still runs on plain `require_admin`; `intent_settlement` contains only a scaffolded `DataKey::Arbiter` storage slot and `Error::NotArbiter` variant that are not yet used in the authorization check. The on-chain arbiter panel is tracked by the `arbiter_panel` implementation issue (issue #95 in this batch; see also issue #407)
+- **The on-chain arbiter panel is the `arbiter_panel` contract (`arbiter_panel/src/lib.rs`; issues #407 / #555).** It has no nomination or confirmation entrypoint and the admin cannot appoint arbiters through it. An arbiter joins by calling `register_arbiter(arbiter)` themselves (requires the arbiter's auth and stakes the configured bond) and leaves with `deregister_arbiter(arbiter)` (blocked while the arbiter has open votes). The admin's only on-chain hooks are `initialize(admin, settlement, bond_token, bond_amount, panel_size, threshold)` on the panel and `set_arbiter_panel(panel)` on `intent_settlement`, after which `resolve_dispute` accepts resolutions only from the panel. Per dispute, `open_vote(intent_id)` selects the panel at random from registered arbiters; members cast `vote(arbiter, intent_id, resolution)` and `tally(intent_id)` settles it
 - **This issue (#309)** designs the off-chain process that informs appointment decisions
 - **Issue #115** defines eligibility/conflict-of-interest criteria for arbiters (referenced and reused here)
 - **Issue #120** defines a community-signaling tool that this process reuses for the community-endorsement phase
@@ -59,6 +59,8 @@ This document describes an off-chain community-nomination and -endorsement proce
 
 **Who decides:** The protocol admin (or multisig, per issue #114)
 
+**On-chain effect:** `arbiter_panel` has no admin-appointment entrypoint. The off-chain decision below determines whom the admin and governance group publicly invite to bond; the candidate then calls `register_arbiter(arbiter)` from their own address, staking the bond. Registered arbiters are drawn into dispute panels at random by `open_vote`.
+
 **Commitment:** The admin commits, as a **documented governance norm** (not code-enforced), to appoint the community-endorsed candidate(s) absent a **specific, disclosed, documented reason not to**.
 
 **Examples of valid reasons to diverge from community endorsement:**
@@ -80,7 +82,7 @@ This document describes an off-chain community-nomination and -endorsement proce
 
 **Transition:** 30 days before a seat expires, the nomination period for that seat opens again.
 
-**Mid-term removal:** If an arbiter becomes ineligible (new conflict of interest, extended absence), the admin or governance group may trigger a special election or temporary rotation per the arbiter panel contract (tracked by the `arbiter_panel` implementation issue, #95 in this batch; see also issue #407).
+**Mid-term removal:** If an arbiter becomes ineligible (new conflict of interest, extended absence), the admin or governance group may trigger a special election. The contract has no admin removal entrypoint: an arbiter leaves via their own `deregister_arbiter(arbiter)` call, and dissenting or absent arbiters lose part of their bond through `tally`.
 
 ---
 
@@ -162,7 +164,7 @@ Week 7 (Feb 23)
           - Examples: "Carol disclosed late conflict of interest" or "Concerns raised in discussion suggest elevated risk"
           
      Decision published in governance update (March 1)
-     On-chain appointments via the arbiter panel contract (issue #95; March 1–7)
+     Endorsed candidates call `register_arbiter` on the arbiter panel contract and stake the bond (March 1–7)
 
 March 31
   └─ New committee takes office
@@ -236,14 +238,14 @@ This process depends on the following being completed or planned:
 
 | Dependency | Status | Role |
 |-----------|--------|---|
-| Arbiter panel contract (issue #95; see also #407) | **Not shipped** — no on-chain arbiter registry/panel exists; `resolve_dispute` still uses `require_admin`, with only a scaffolded `DataKey::Arbiter`/`Error::NotArbiter` in `intent_settlement` | Would provide on-chain registry for appointments |
+| Arbiter panel contract (`arbiter_panel`; issues #95 / #407 / #555) | **Implemented** — bonded `register_arbiter` / `deregister_arbiter`, `open_vote`, `vote`, `tally`; wired to settlement via `set_arbiter_panel` | Provides the on-chain registry arbiters join by bonding |
 | Issue #115: Arbiter code-of-conduct | Assumed shipped | Defines eligibility criteria reused here |
 | Issue #120: Community-signaling tool | Assumed shipped, interim OK | Enables community endorsement voting |
 | Governance group (Issue #117) | Assumed seated | Makes final appointment decisions |
 
 **If dependencies are not met:**
 
-- **Arbiter panel contract (#95) not shipped:** This process cannot operate as designed (no on-chain registry to appoint to); today the admin address is the sole arbiter. Document this as a blocker and track progress on the `arbiter_panel` implementation issue (#95; see also #407).
+- **Panel not configured on `intent_settlement`:** If the admin has not called `set_arbiter_panel`, `resolve_dispute` is not yet gated by the panel and the admin address remains the sole arbiter. Confirm the panel is set before running a cycle.
 - **#115 not finalized:** Use preliminary eligibility criteria in first cycle; rebase on #115 once finalized.
 - **#120 not shipped:** Use interim signaling mechanism (GitHub Discussion) per Edge Case #5.
 - **Governance group not seated:** Admin unilaterally appoints; next cycle awaits governance (issue #117) setup.
@@ -307,7 +309,7 @@ All arbiter nomination cycles are archived:
 
 ### vs. Formal On-Chain Election (Deferred)
 
-This process is intentionally **off-chain and advisory**. A full on-chain election (where community votes are code-enforced) is deferred as a separate effort (the `arbiter_panel` implementation issue, #95, and issue #407 note this as future work). That effort would require:
+This process is intentionally **off-chain and advisory**. A full on-chain election (where community votes are code-enforced) is deferred as a separate effort (the current `arbiter_panel` contract uses bonded self-registration and random panel selection, not community voting). That effort would require:
 
 - Governance token or stake-weighted voting
 - Trustless vote-counting on-chain
@@ -362,7 +364,7 @@ A: That is out of scope for this election process. See issue #115 (arbiter code-
 ## Roadmap
 
 1. **Now:** Document this process (this file)
-2. **Pending issue #95 (arbiter panel contract):** Once the on-chain arbiter panel ships, conduct first nomination cycle (pilot)
+2. **Arbiter panel contract (`arbiter_panel`) is implemented:** Once it is deployed and set on `intent_settlement`, conduct first nomination cycle (pilot)
 3. **Pilot cycle:** Run nomination, signaling, and appointment for 1–2 committee seats to validate process
 4. **Learnings:** Document any bottlenecks or community feedback; adjust process for next cycle if needed
 5. **Ongoing:** Execute regular nomination cycles on fixed schedule (annual or per governance decision)
@@ -372,7 +374,7 @@ A: That is out of scope for this election process. See issue #115 (arbiter code-
 
 ## References
 
-- **Issue #95**: `arbiter_panel` implementation (on-chain arbiter panel contract; see also issue #407)
+- **Issue #95**: `arbiter_panel` implementation (on-chain arbiter panel contract, `arbiter_panel/src/lib.rs`; see also issues #407 / #555)
 - **Issue #115**: Arbiter code-of-conduct and eligibility criteria (referenced for screening)
 - **Issue #120**: Community-signaling tool (mechanism for endorsement voting)
 - **Issue #112**: RFC process (escalation path for process changes)

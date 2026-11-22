@@ -16,6 +16,9 @@ Thank you for nominating a candidate for the Vortex Protocol's arbiter committee
 **Candidate Name (or pseudonym):**
 [Name or pseudonym]
 
+**Stellar address (the `arbiter` argument of `register_arbiter` on `arbiter_panel`):**
+[G... or C... address]
+
 **Contact Information:**
 - Discord: @[handle]
 - GitHub: [@handle](https://github.com/handle)
@@ -43,6 +46,7 @@ Thank you for nominating a candidate for the Vortex Protocol's arbiter committee
 - [ ] I confirm I want to be considered for the arbiter committee
 - [ ] I meet the eligibility criteria in [issue #115's arbiter code-of-conduct](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/115)
 - [ ] I have no current conflicts of interest with the Vortex Protocol (see below)
+- [ ] I will stake the panel's configured bond by calling `register_arbiter` from this address if appointed
 - [ ] I have reasonable availability to serve on the committee for a 12-month term
 - [ ] I commit to reviewing the [Dispute Resolution Design](../docs/dispute-resolution-design.md) and [Arbiter Election Process](../docs/arbiter-election-process.md)
 
@@ -97,7 +101,7 @@ Links to relevant experience or community involvement:
 
 **What happens next:**
 
-1. **Screening (3 days)**: Maintainers review eligibility criteria and confirm the candidate is registered
+1. **Screening (3 days)**: Maintainers review eligibility criteria and confirm the candidate is eligible
 2. **Nomination Period (28 days)**: Community discusses the nomination; candidate may answer questions
 3. **Community Signaling (14 days)**: Community votes on all eligible candidates using the signaling tool (issue #120)
 4. **Admin Appointment (7 days)**: Admin appoints based on community endorsement (see [Arbiter Election Process](../docs/arbiter-election-process.md) for details)
