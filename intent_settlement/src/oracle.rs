@@ -88,7 +88,7 @@ pub fn weight_bps(env: &Env, oracle_addr: Option<&Address>, from: &Address, to: 
 // ─── Result type ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, PartialEq)]
-pub enum OracleFault {
+pub enum OracleError {
     /// Oracle returned `None` — no price available.
     NotAvailable,
     /// Price is older than `MAX_PRICE_AGE_SECS`.
@@ -102,24 +102,24 @@ pub enum OracleFault {
 /// Fetch the price of `asset` from the oracle at `oracle_addr`.
 ///
 /// Returns `Ok((price, decimals))` on success.
-/// Returns `Err(OracleFault)` if the price is stale, zero, or unavailable.
+/// Returns `Err(OracleError)` if the price is stale, zero, or unavailable.
 pub fn fetch_price(
     env: &Env,
     oracle_addr: &Address,
     asset: &Address,
-) -> Result<(i128, u32), OracleFault> {
+) -> Result<(i128, u32), OracleError> {
     let client = OracleAdapterClient::new(env, oracle_addr);
     // `try_` so a trapping / non-conforming oracle is a fault, not a revert:
     // slashing must never be blocked by the oracle.
     match client.try_lastprice(asset).ok().and_then(|r| r.ok()).flatten() {
-        None => Err(OracleFault::NotAvailable),
+        None => Err(OracleError::NotAvailable),
         Some(pd) => {
             let now = env.ledger().timestamp();
             if now > pd.timestamp && now - pd.timestamp > MAX_PRICE_AGE_SECS {
-                return Err(OracleFault::Stale);
+                return Err(OracleError::Stale);
             }
             if pd.price <= 0 {
-                return Err(OracleFault::ZeroOrNegative);
+                return Err(OracleError::ZeroOrNegative);
             }
             Ok((pd.price, pd.decimals))
         }
