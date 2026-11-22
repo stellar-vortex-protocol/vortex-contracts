@@ -343,15 +343,53 @@
         padding: 12px;
       }
     }
+
+    .skip-link {
+      position: absolute;
+      left: 8px;
+      top: -100px;
+      z-index: 1000;
+      padding: 8px 16px;
+      background: var(--primary);
+      color: #fff;
+      border-radius: 4px;
+    }
+
+    .skip-link:focus,
+    .skip-link:focus-visible {
+      top: 8px;
+    }
+
+    a:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    summary:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 3px solid #2563eb;
+      outline-offset: 2px;
+    }
+
+    .skip-link:focus-visible {
+      outline-color: #fff;
+    }
+
+    main:focus {
+      outline: none;
+    }
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
   <div class="container">
     <header>
       <h1>Vortex Protocol</h1>
       <h2 style="font-size: 1.3rem; font-weight: 400;">Proof of Reserves Dashboard</h2>
       <p class="subtitle">Transparency tool for protocol-backed assets</p>
     </header>
+
+    <main id="main-content" tabindex="-1">
 
     <div class="status-banner">
       ℹ️ <strong>Tip:</strong> This dashboard displays the on-chain collateral backing the protocol's security model. See <a href="../SECURITY.md">SECURITY.md</a> for the full threat model and assumptions.
@@ -434,6 +472,8 @@
       RPC Endpoint: <span id="rpc-endpoint">(See configuration below)</span><br>
       Refresh Interval: 5 minutes
     </div>
+
+    </main>
 
     <footer>
       <p><strong>Vortex Protocol Proof of Reserves</strong></p>
