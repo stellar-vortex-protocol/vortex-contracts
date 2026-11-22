@@ -610,6 +610,222 @@ export enum IntentPeripheryError {
   SettlementCallFailed = 9,
   InvalidConfig = 10,
 }
-</｜｜DSML｜｜ parameter>
-</｜｜DSML｜｜ invoke>
-</｜｜DSML｜｜ calls>
+
+/* =========================================================================
+ * Additional contract error codes (issue #687)
+ * Discriminants mirror each crate's #[contracterror] enum.
+ * ========================================================================= */
+
+/** vortex-common CommonError (vortex-common/src/lib.rs) */
+export enum CommonError {
+  Unauthorized = 1,
+  NotInitialized = 2,
+}
+
+/** solver_registry::Error */
+export enum SolverRegistryError {
+  AlreadyInitialized = 1,
+  NotInitialized = 2,
+  Unauthorized = 3,
+  SolverNotRegistered = 4,
+  SolverAlreadyRegistered = 5,
+  BondBelowFloor = 6,
+  ZeroAmount = 7,
+  InsufficientBond = 8,
+  InvalidTier = 9,
+  ThresholdOutOfBounds = 10,
+  ThresholdsNotMonotonic = 11,
+  WriterNotSet = 12,
+  TimelockNotElapsed = 13,
+  NoPendingWriter = 14,
+  WriterAlreadySet = 15,
+  AlreadyRecorded = 16,
+  AdminTimelockNotElapsed = 17,
+  NoPendingAdminTransfer = 18,
+  OpenObligations = 19,
+}
+
+/** proof_registry::Error */
+export enum ProofRegistryError {
+  AlreadyInitialized = 1,
+  Unauthorized = 2,
+  EmitterNotAuthorized = 3,
+  ProofAlreadyExists = 4,
+  ProofNotFound = 5,
+  InvalidPayload = 6,
+  NotInitialized = 7,
+  VaaAlreadyProcessed = 8,
+  EmitterChainMismatch = 9,
+  ChainIdOutOfRange = 10,
+  ConfiguratorNotSet = 11,
+  ProofStale = 12,
+}
+
+/** reputation_badge::Error */
+export enum ReputationBadgeError {
+  AlreadyInitialized = 1,
+  Unauthorized = 2,
+  NotInitialized = 3,
+  BadgeNotFound = 4,
+}
+
+/** arbiter_panel::Error */
+export enum ArbiterPanelError {
+  AlreadyInitialized = 1,
+  NotInitialized = 2,
+  InvalidConfig = 3,
+  AlreadyRegistered = 4,
+  NotRegistered = 5,
+  HasOpenVotes = 6,
+  RoundExists = 7,
+  RoundNotFound = 8,
+  NoEligibleArbiters = 9,
+  NotOnPanel = 10,
+  AlreadyVoted = 11,
+  VotingClosed = 12,
+  RoundSettled = 13,
+  QuorumNotReached = 14,
+}
+
+/** directory::Error */
+export enum DirectoryError {
+  AlreadyInitialized = 1,
+  NotInitialized = 2,
+  NotFound = 3,
+  NoPendingAdmin = 4,
+}
+
+/** timelock::TimelockError */
+export enum TimelockError {
+  Unauthorized = 1,
+  InsufficientDelay = 2,
+  AlreadyScheduled = 3,
+  NotWaiting = 4,
+  NotReady = 5,
+  AlreadyDone = 6,
+  UnknownOperation = 7,
+  UnmetPredecessor = 8,
+  InvalidPredecessor = 9,
+  Expired = 10,
+  NotExpired = 11,
+  InvalidPredecessorState = 12,
+}
+
+/* =========================================================================
+ * Event payloads (issue #687)
+ * Contracts emit events with env.events().publish(topics, data); there are
+ * no #[contractevent] definitions. Each interface describes the decoded
+ * data tuple; the event name (topics[0]) and any extra topic are noted in
+ * the doc comment. See docs/event-schema.md. Addresses are StrKey strings,
+ * i128 amounts are decimal strings, BytesN<32> is a hex string.
+ * ========================================================================= */
+
+/** intent_settlement `intent_submitted`, topics: (name, user) */
+export interface IntentSubmittedEvent {
+  intent_id: string;
+  min_dst_amount: string; // i128
+  expiry: number; // u64
+}
+
+/** intent_settlement `intent_accepted`, topics: (name, solver) */
+export interface IntentAcceptedEvent {
+  intent_id: string;
+  fill_deadline: number; // u64
+}
+
+/** intent_settlement `intent_filled`, topics: (name, solver) */
+export interface IntentFilledEvent {
+  intent_id: string;
+  fill_amount: string; // i128
+  fee: string; // i128
+}
+
+/** intent_settlement `extension_granted`, topics: (name, solver) */
+export interface ExtensionGrantedEvent {
+  intent_id: string;
+  new_deadline: number; // u64
+}
+
+/** intent_settlement `solver_slashed`, topics: (name, solver) */
+export interface SolverSlashedEvent {
+  intent_id: string;
+  slash_amount: string; // i128
+}
+
+/** intent_settlement `bond_withdrawn`, topics: (name, solver) */
+export interface BondWithdrawnEvent {
+  amount: string; // i128
+  remaining: string; // i128
+}
+
+/** intent_settlement `tokens_rescued`, topics: (name, to) */
+export interface TokensRescuedEvent {
+  token: string;
+  amount: string; // i128
+}
+
+/** intent_settlement `bond_multiplier_set`, topics: (name) */
+export interface BondMultiplierSetEvent {
+  token: string;
+  multiplier: string; // i128
+}
+
+/**
+ * intent_settlement `config_updated`, topics: (name).
+ * The code publishes five fields (max_active_intents_per_solver was added
+ * after the event-schema.md entry was written).
+ */
+export interface ConfigUpdatedEvent {
+  min_bond: string; // i128
+  fill_window: number; // u64
+  intent_expiry: number; // u64
+  protocol_fee_bps: string; // i128
+  max_active_intents_per_solver: number; // u32
+}
+
+/** backstop_vault `deposit`, topics: (name, lp) */
+export interface BackstopDepositEvent {
+  amount: string; // i128
+  shares_minted: string; // i128
+}
+
+/** backstop_vault `withdraw` and `withdraw_queued`, topics: (name, lp) */
+export interface BackstopWithdrawEvent {
+  shares: string; // i128
+  assets_out: string; // i128
+}
+
+/** backstop_vault `cover`, topics: (name, recipient) */
+export interface BackstopCoverEvent {
+  intent_id: string;
+  payout: string; // i128
+}
+
+/** treasury_streams `create`, topics: (name, stream_id) */
+export interface StreamCreatedEvent {
+  sender: string;
+  recipient: string;
+  token: string;
+  total: string; // i128
+  start: number; // u64
+  cliff: number; // u64
+  end: number; // u64
+}
+
+/** treasury_streams `withdraw`, topics: (name, stream_id) */
+export interface StreamWithdrawEvent {
+  recipient: string;
+  claimable: string; // i128
+}
+
+/** treasury_streams `cancel`, topics: (name, stream_id) */
+export interface StreamCancelledEvent {
+  sender: string;
+  unvested: string; // i128
+}
+
+/** intent_periphery `periphery_initialized`, topics: (name) */
+export interface PeripheryInitializedEvent {
+  admin: string;
+  settlement: string;
+}
