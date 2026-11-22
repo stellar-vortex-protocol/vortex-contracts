@@ -41,8 +41,29 @@ const config = {
   massSolverExitThreshold: parseInt(process.env.MASS_SOLVER_EXIT_THRESHOLD || "3", 10),
 };
 
-if (!config.contractId) {
-  console.error("ERROR: CONTRACT_ID environment variable not set");
+/**
+ * Validate a Soroban contract ID. Contract IDs are Stellar strkeys: 56
+ * characters, a leading "C" followed by 55 base32 characters (A-Z, 2-7).
+ * (Not hex — hex contract IDs are not what the RPC accepts.)
+ * @param {string|undefined} id
+ * @returns {string|null} error message naming the offending value, or null if valid
+ */
+function validateContractId(id) {
+  if (!id) {
+    return "CONTRACT_ID environment variable not set";
+  }
+  if (id.length !== 56) {
+    return `CONTRACT_ID "${id}" has length ${id.length}, expected 56 characters`;
+  }
+  if (!/^C[A-Z2-7]{55}$/.test(id)) {
+    return `CONTRACT_ID "${id}" is malformed: must start with "C" followed by 55 base32 characters (A-Z, 2-7)`;
+  }
+  return null;
+}
+
+const contractIdError = validateContractId(config.contractId);
+if (contractIdError) {
+  console.error(`ERROR: ${contractIdError}`);
   process.exit(1);
 }
 
