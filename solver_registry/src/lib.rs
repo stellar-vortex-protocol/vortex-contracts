@@ -508,7 +508,13 @@ impl SolverRegistry {
             .persistent()
             .has(&DataKey::Solver(solver.clone()))
         {
-            panic_with_error!(&env, Error::SolverAlreadyRegistered);
+            // Return (not panic): a panic rolls back events, which would hide the
+            // rejection from indexers. No state change or token transfer occurs.
+            env.events().publish(
+                (Symbol::new(&env, "solver_registration_rejected"), solver),
+                Error::SolverAlreadyRegistered as u32,
+            );
+            return;
         }
         if bond_amount < Self::tier0_floor(&env) {
             panic_with_error!(&env, Error::BondBelowFloor);
