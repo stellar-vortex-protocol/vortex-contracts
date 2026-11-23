@@ -126,6 +126,7 @@ See [`src/types.ts`](./src/types.ts) for full documentation.
 ✅ **Type-safe** — Full TypeScript support with JSDoc comments  
 ✅ **Comprehensive** — All 100+ contract functions exposed  
 ✅ **Soroban-native** — Built on `stellar-sdk` for Soroban contracts  
+✅ **Efficient** — The contract spec is parsed once, on first use, and cached on the client instance, so reuse one `VortexClient` for many calls  
 ✅ **Well-documented** — Every method and type has detailed comments  
 
 ## Status
