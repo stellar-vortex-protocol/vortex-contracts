@@ -230,15 +230,24 @@ impl BackstopVault {
             .persistent()
             .get(&DataKey::Shares(lp.clone()))
             .unwrap_or(0);
+        let new_lp_shares = lp_shares
+            .checked_add(shares_minted)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ArithmeticOverflow));
+        let new_total_shares = total_shares
+            .checked_add(shares_minted)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ArithmeticOverflow));
+        let new_total_assets = total_assets
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ArithmeticOverflow));
         env.storage()
             .persistent()
-            .set(&DataKey::Shares(lp.clone()), &(lp_shares + shares_minted));
+            .set(&DataKey::Shares(lp.clone()), &new_lp_shares);
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares, &(total_shares + shares_minted));
+            .set(&DataKey::TotalShares, &new_total_shares);
         env.storage()
             .instance()
-            .set(&DataKey::TotalAssets, &(total_assets + amount));
+            .set(&DataKey::TotalAssets, &new_total_assets);
         Self::bump_persistent_ttl(&env, &DataKey::Shares(lp.clone()));
 
         // Cooldown scoping (Issue #485).
