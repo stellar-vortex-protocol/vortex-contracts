@@ -187,6 +187,19 @@ stellar contract invoke \
     --deadline "9999999999"
 ```
 
+### Using `scripts/invoke.sh` Against the Local Network
+
+`scripts/invoke.sh` has no network positional argument. Set `VORTEX_NETWORK=local` to target the network started above:
+
+```bash
+VORTEX_NETWORK=local \
+VORTEX_SECRET_KEY=<SECRET> \
+VORTEX_INTENT_SETTLEMENT_ID=$CONTRACT_ID \
+  ./scripts/invoke.sh intent_settlement get_stats
+```
+
+Run `./scripts/invoke.sh --help` for the full list of variables and commands.
+
 ## Architecture
 
 - **Horizon**: REST API for balance queries, transaction submission (port 8000)

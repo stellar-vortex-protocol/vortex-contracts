@@ -8,6 +8,11 @@
 # Usage:
 #   ./scripts/invoke.sh <contract> <function> [options]
 #
+# The network is not a positional argument. Select it with VORTEX_NETWORK
+# (testnet or local; default: testnet). For the local network started by
+# ./setup-local-network.sh, run:
+#   VORTEX_NETWORK=local ./scripts/invoke.sh intent_settlement get_stats
+#
 # Examples — intent_settlement:
 #   ./scripts/invoke.sh intent_settlement submit_intent --user <USER> --src_chain ethereum --src_token <TOKEN> --src_amount <AMOUNT> --dst_token <USDC_SAC> --min_dst_amount <MIN>
 #   ./scripts/invoke.sh intent_settlement register_solver --solver <SOLVER> --bond_amount <AMOUNT>
@@ -62,7 +67,7 @@
 #     VORTEX_<CONTRACT>_ID   - Contract ID for a specific contract (e.g. VORTEX_INTENT_SETTLEMENT_ID)
 #     VORTEX_CONTRACT_ID     - Fallback contract ID used when the contract-specific var is unset
 #     VORTEX_SECRET_KEY      - Secret key for signing (required)
-#     VORTEX_NETWORK         - Network (default: testnet)
+#     VORTEX_NETWORK         - Network: testnet or local (default: testnet)
 #     VORTEX_CONFIG          - Config file path (default: .env.local)
 
 set -euo pipefail
@@ -79,11 +84,6 @@ fi
 # Use environment variables with fallback to defaults
 SECRET_KEY="${VORTEX_SECRET_KEY:-}"
 NETWORK="${VORTEX_NETWORK:-testnet}"
-
-if [[ -z "$SECRET_KEY" ]]; then
-  echo "Error: VORTEX_SECRET_KEY not set. Set it via environment or in $CONFIG_FILE"
-  exit 1
-fi
 
 # ─── Resolve contract ID ────────────────────────────────────────────────────
 # Each contract has its own env var (VORTEX_<UPPER_NAME>_ID); falls back to
@@ -116,6 +116,10 @@ Vortex Contract CLI Helper
 Usage:
   ./scripts/invoke.sh <contract> <function> [options]
 
+Example (local network, after ./setup-local-network.sh start):
+  VORTEX_NETWORK=local VORTEX_SECRET_KEY=<SECRET> VORTEX_INTENT_SETTLEMENT_ID=<CONTRACT_ID> \
+    ./scripts/invoke.sh intent_settlement get_stats
+
 Contracts:
   intent_settlement   Core swap-intent lifecycle
   solver_registry     Solver bond management and reputation
@@ -133,7 +137,7 @@ Configuration:
     VORTEX_<CONTRACT>_ID   e.g. VORTEX_INTENT_SETTLEMENT_ID (per-contract)
     VORTEX_CONTRACT_ID     Fallback contract ID
     VORTEX_SECRET_KEY      Secret key for signing (required)
-    VORTEX_NETWORK         Network (default: testnet)
+    VORTEX_NETWORK         Network: testnet or local (default: testnet)
     VORTEX_CONFIG          Config file path (default: .env.local)
 EOF
   exit 1
@@ -287,7 +291,7 @@ append_value()  { STELLAR_CMD+=("--$1" "$2"); }
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
-if [[ $# -lt 1 ]]; then
+if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   print_usage
 fi
 
@@ -317,6 +321,11 @@ fi
 
 COMMAND="$1"
 shift
+
+if [[ -z "$SECRET_KEY" ]]; then
+  echo "Error: VORTEX_SECRET_KEY not set. Set it via environment or in $CONFIG_FILE"
+  exit 1
+fi
 
 STELLAR_CMD=(
   stellar contract invoke
