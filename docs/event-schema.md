@@ -36,11 +36,12 @@ The change is **not yet active** — the nominee must call `accept_fee_recipient
 | Field | Type | Description |
 |-------|------|-------------|
 | **topics[0]** | `Symbol` | `"fee_recipient_proposed"` |
-| **data** | `Address` | The proposed (not yet active) new fee recipient address |
+| **data[0]** | `Address` | The proposed (not yet active) new fee recipient address |
+| **data[1]** | `u64` | `eta` — earliest timestamp the proposal can be accepted |
 
 ```
 topics : ("fee_recipient_proposed",)
-data   : <new_fee_recipient: Address>
+data   : (new_fee_recipient: Address, eta: u64)
 ```
 
 ---
@@ -64,8 +65,8 @@ data   : <new_fee_recipient: Address>
 
 #### `admin_transferred`
 
-Emitted by `transfer_admin` after both the outgoing and incoming admin have
-signed. The admin role is now held by the data address.
+Emitted by `accept_admin_transfer` once the incoming admin accepts a pending
+transfer (see also `admin_transfer_proposed` below). The admin role is now held by the data address.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -91,10 +92,12 @@ atomically.
 | **data[1]** | `u64` | `fill_window` — seconds a solver has to fill after accepting |
 | **data[2]** | `u64` | `intent_expiry` — default intent lifetime in seconds |
 | **data[3]** | `i128` | `protocol_fee_bps` — fee in basis points (1 bps = 0.01%) |
+| **data[4]** | _(as in source)_ | `max_active_intents_per_solver` — per-solver cap on concurrently active intents |
 
 ```
 topics : ("config_updated",)
-data   : (min_bond: i128, fill_window: u64, intent_expiry: u64, protocol_fee_bps: i128)
+data   : (min_bond: i128, fill_window: u64, intent_expiry: u64, protocol_fee_bps: i128,
+          max_active_intents_per_solver)
 ```
 
 ---
@@ -284,11 +287,12 @@ first-time registration and subsequent top-ups.
 |-------|------|-------------|
 | **topics[0]** | `Symbol` | `"solver_registered"` |
 | **topics[1]** | `Address` | The solver address |
-| **data** | `i128` | `bond_amount` — the incremental deposit (not cumulative total) |
+| **data[0]** | `Address` | `bond_token` — the bond token deposited |
+| **data[1]** | `i128` | `bond_amount` — the incremental deposit (not cumulative total) |
 
 ```
 topics : ("solver_registered", <solver: Address>)
-data   : <bond_amount: i128>
+data   : (bond_token: Address, bond_amount: i128)
 ```
 
 ---
@@ -301,11 +305,11 @@ Emitted by `deregister_solver` after the full bond refund transfer.
 |-------|------|-------------|
 | **topics[0]** | `Symbol` | `"solver_deregistered"` |
 | **topics[1]** | `Address` | The solver address |
-| **data** | `i128` | The bond amount refunded (was `solver_record.bond_amount` before removal) |
+| **data** | `i128` | `total_default_refund` — the bond refunded in the default bond token |
 
 ```
 topics : ("solver_deregistered", <solver: Address>)
-data   : <bond_refunded: i128>
+data   : <total_default_refund: i128>
 ```
 
 ---
@@ -749,7 +753,9 @@ Stream IDs are monotonically increasing `u64` counters.
 
 > **Note:** `treasury_streams` uses `soroban_sdk::symbol_short!` for the event
 > name topic (max 9 bytes), so the symbol values are exactly `"create"`,
-> `"withdraw"`, and `"cancel"` — not longer names.
+> `"withdraw"`, `"cancel"`, `"top_up"`, `"extend"`, `"pause"` and `"unpause"`
+> — not longer names. `top_up`, `extend`, `pause` and `unpause` are listed under
+> "Additional events".
 
 ---
 
@@ -824,7 +830,8 @@ data   : (sender: Address, unvested: i128)
 
 `intent_periphery` is a read-only proxy that aggregates heavy view and
 governance surfaces from the core `intent_settlement` contract. It emits only
-two administrative events (it never moves funds).
+administrative events (it never moves funds): `periphery_initialized`,
+`settlement_proposed` and `settlement_updated`.
 
 ---
 
@@ -868,16 +875,10 @@ data   : <settlement: Address>
 
 # Event Schema — `governor`
 
-> Added in issue #519. Source of truth: `governor/src/lib.rs`.
-
-The `governor` contract manages stake-weighted on-chain governance. As of this
-writing the governor does **not yet emit events** — state transitions are
-recorded entirely in persistent storage and can be reconstructed via the
-`state`, `get_proposal`, and `voting_power` view functions.
-
-Event emission for `proposed`, `voted`, `queued`, and `executed` transitions is
-tracked in the open roadmap item referenced by this issue. When those events are
-added, this section will be expanded with their full schemas.
+> Added in issue #519; synced with source in issue #696. Source of truth:
+> `governor/src/lib.rs`. The governor emits the events listed under
+> "Additional events" below (`init`, `cfg_upd`, `propose`, `proposal_canceled`,
+> `vote`, `queue`, `execute`).
 
 ---
 
@@ -893,3 +894,168 @@ exclusively through return values and the caller's own event layer.
 
 If `fee_router` is later promoted to a standalone Soroban contract, this
 section will be updated with its event schema.
+
+---
+
+# Additional events (synced with source, issue #696)
+
+> Source of truth: the `env.events().publish` call sites in each crate's
+> `src/lib.rs`. Rows below are events that were missing from the catalogue
+> above. Topic shape is `(name[, indexed...])`; `data` is the payload. A data
+> field written `(a, b)` is a tuple. Governance-delay proposals carry an `eta`
+> (`u64` Unix timestamp).
+
+## `intent_settlement` — additional events
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `fee_recipient_proposal_cancelled` | `cancel_pending_fee_recipient` | `(name)` | `pending: Address` |
+| `admin_transfer_proposed` | `propose_admin_transfer` | `(name)` | `(new_admin: Address, eta: u64)` |
+| `upgrade_proposed` | `propose_upgrade` | `(name)` | `(new_wasm_hash: BytesN<32>, eta: u64)` |
+| `upgraded` | `execute_upgrade` | `(name)` | `new_wasm_hash: BytesN<32>` |
+| `migrated` | `migrate` | `(name)` | `(from_version, MIGRATION_VERSION)` |
+| `dst_token_add_proposed` | `propose_add_dst_token` | `(name)` | `(token: Address, eta: u64)` |
+| `dst_token_add_proposal_cancelled` | `cancel_pending_dst_token_add` | `(name)` | `token: Address` |
+| `dst_token_remove_proposed` | `propose_remove_dst_token` | `(name)` | `(token: Address, eta: u64)` |
+| `dst_token_remove_proposal_cancelled` | `cancel_pending_dst_token_remove` | `(name)` | `token: Address` |
+| `chain_onboarding_proposed` | `propose_chain_onboarding` | `(name)` | `(chain_name, wormhole_id, eta: u64)` |
+| `chain_onboarding_executed` | `execute_chain_onboarding` | `(name)` | `(chain_name, wormhole_id)` |
+| `chain_offboarding_executed` | `execute_chain_offboarding` | `(name)` | `chain_name` |
+| `pauser_updated` | `set_pauser` | `(name)` | `pauser: Address` |
+| `proof_registry_set` | `set_proof_registry` | `(name)` | `registry: Address` |
+| `intent_amended` | `amend_intent` | `(name, user: Address)` | `(intent_id: BytesN<32>, old_min, new_min_dst_amount, old_deadline, new_deadline)` |
+| `fill_begun` | `begin_fill` | `(name, solver: Address)` (some code paths emit `(name)` only) | `(intent_id: BytesN<32>, fill_amount: i128, dispute_deadline: u64)`; the `(name)`-only variant carries `(intent_id, solver, fill_amount)` |
+| `fill_disputed` | `dispute_fill` | `(name, user: Address)` | `intent_id: BytesN<32>` |
+| `dispute_resolved` | `resolve_dispute` | `(name, solver: Address)` | `(intent_id: BytesN<32>, released_amount: i128, slash_amount: i128)` |
+| `fill_released` | `release_fill` | `(name, solver: Address)` | `(intent_id: BytesN<32>, released_amount: i128)` |
+| `bid_window_enabled` | `set_bid_window_enabled` | `(name)` | `enabled: bool` |
+| `bid_submitted` | `bid_intent` | `(name, solver: Address)` | `(intent_id: BytesN<32>, quoted_dst_amount: i128)` |
+| `bids_settled` | `settle_bids` | `(name)` | `(intent_id: BytesN<32>, winning_quote: i128)` |
+| `bids_settled_no_winner` | `settle_bids` | `(name)` | `intent_id: BytesN<32>` |
+| `arbiter_updated` | `set_arbiter` | `(name)` | `arbiter: Address` |
+| `arbiter_panel_set` | `set_arbiter_panel` | `(name)` | `panel: Address` |
+| `bond_token_allowed` | `add_allowed_bond_token` | `(name)` | `token: Address` |
+| `bond_token_disallowed` | `remove_allowed_bond_token` | `(name)` | `token: Address` |
+| `bond_token_min_set` | `set_bond_token_min` | `(name)` | `(token: Address, amount: i128)` |
+| `outbound_intent_submitted` | `submit_outbound_intent` | `(name, user: Address)` | `outbound_intent_id: BytesN<32>` |
+| `outbound_intent_accepted` | `accept_outbound_intent` | `(name, solver: Address)` | `outbound_intent_id: BytesN<32>` |
+| `backstop_claimed` | `claim_backstop_compensation` | `(name, user: Address)` | `(intent_id: BytesN<32>, payout: i128, remaining_pool: i128)` |
+| `intent_retention_updated` | `set_intent_retention` | `(name)` | `retention_secs: u64` |
+| `intent_closed` | `close_intent` | `(name)` | `(intent_id: BytesN<32>, user: Address, state: IntentState)` |
+| `oracle_proposed` | `propose_oracle` | `(name)` | `(oracle: Address, eta: u64)` |
+| `oracle_set` | `execute_oracle` | `(name)` | `oracle: Address` |
+
+Notes: `settle_bids` also emits `intent_accepted` for the winning solver
+(`(name, solver)` / `(intent_id, deadline)`, same shape as above).
+`solver_registered` and `solver_deregistered` payloads are as corrected above.
+
+## `solver_registry`
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `writer_set` | `set_writer`, `execute_writer` | `(name)` | `writer: Address` |
+| `admin_transfer_proposed` | `propose_admin` | `(name)` | `(new_admin: Address, eta: u64)` |
+| `admin_transferred` | `accept_admin` | `(name)` | `(old_admin: Address, new_admin: Address)` |
+| `admin_transfer_cancelled` | `cancel_admin_transfer` | `(name)` | `pending: Address` |
+| `writer_proposed` | `propose_writer` | `(name)` | `(new_writer: Address, eta: u64)` |
+| `writer_proposal_cancelled` | `cancel_writer` | `(name)` | `pending: Address` |
+| `tier_threshold_set` | `set_tier_threshold` | `(name)` | `(tier, min_bond: i128, min_score_bps)` |
+| `solver_registered` | `register_solver` | `(name, solver: Address)` | `bond_amount: i128` |
+| `staked` | `stake` | `(name, solver: Address)` | `(amount: i128, total_bond: i128)` |
+| `unstaked` | `unstake` | `(name, solver: Address)` | `(amount: i128, remaining: i128)` |
+| `solver_deregistered` | `deregister_solver` | `(name, solver: Address)` | `bond_refunded: i128` |
+| `fill_recorded` | `record_fill` | `(name, solver: Address)` | `(amount: i128, score)` |
+| `failure_recorded` | `record_failure` | `(name, solver: Address)` | `score` |
+| `solver_slashed` | `slash` | `(name, solver: Address)` | `(slash_amount: i128, new_tier)` |
+| `obligation_locked` | `lock_obligation` | `(name, solver: Address)` | `(intent_id: BytesN<32>, count: u32)` |
+| `obligation_released` | `release_obligation` | `(name, solver: Address)` | `(intent_id: BytesN<32>, count: u32)` |
+
+Note: `solver_registry`'s `solver_registered` / `solver_deregistered` /
+`solver_slashed` payloads differ from the same-named `intent_settlement`
+events; disambiguate by emitting contract address.
+
+## `proof_registry`
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `emitter_authorized` | `set_authorized_emitter` | `(name)` | `(chain_id: u32, emitter: BytesN<32>)` |
+| `emitter_removed` | `remove_authorized_emitter` | `(name)` | `chain_id: u32` |
+| `axelar_source_authorized` | `set_authorized_axelar_source` | `(name)` | `(chain_name: Symbol, source_address: String)` |
+| `axelar_source_removed` | `remove_authorized_axelar_source` | `(name)` | `chain_name: Symbol` |
+| `proof_received` | `receive_message` | `(name)` | `(intent_id: BytesN<32>, src_chain_id: u32, src_amount: i128, sequence: u64)` |
+| `proof_received_axelar` | `receive_message_axelar` | `(name)` | `(intent_id: BytesN<32>, src_chain_id: u32, src_amount: i128)` |
+
+## `timelock`
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `scheduled` | `schedule_batch` | `(name, id)` | `id` |
+| `cancelled` | `cancel` | `(name, id)` | `()` |
+| `executed` | `execute` | `(name, id)` | `()` |
+
+(`id` is the operation identifier computed by the contract.)
+
+## `governor`
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `init` | `initialize` | `(name)` | `(registry: Address, timelock: Address, voting_delay, voting_period, proposal_threshold, quorum)` |
+| `cfg_upd` | `update_config` | `(name)` | same tuple as `init` |
+| `propose` | `propose` | `(name)` | `(proposal_id, proposer: Address, target: Address)` |
+| `proposal_canceled` | `cancel` | `(name, proposal_id)` | `caller: Address` |
+| `vote` | `cast_vote` | `(name)` | `(proposal_id, voter: Address, support, power)` |
+| `queue` | `queue` | `(name)` | `(proposal_id, eta: u64)` |
+| `execute` | `execute` | `(name)` | `(proposal_id, target: Address, function: Symbol)` |
+
+## `backstop_vault` — additional events
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `rescue_tokens` | `rescue_tokens` | `(name, token: Address, recipient: Address)` | `amount: i128` |
+| `config_updated` | `set_config` | `(name)` | `config` (the vault config struct) |
+
+## `reputation_badge`
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `solver_registry_set` | `set_solver_registry` | `(name)` | `solver_registry: Address` |
+| `badge_minted` | `mint_badge` | `(name, solver: Address)` | `tier` |
+| `badge_burned` | `burn_badge` | `(name, solver: Address)` | `()` |
+
+## `directory`
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `addr_set` | `set_address` | `(name, entry_name)` | `addr: Address` |
+| `addr_rm` | `remove_address` | `(name)` | `entry_name` |
+
+## `arbiter_panel`
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `arb_reg` | `register_arbiter` | `(name)` | `arbiter: Address` |
+| `arb_dereg` | `deregister_arbiter` | `(name)` | `arbiter: Address` |
+| `vote_open` | `open_vote` | `(name, intent_id)` | `panel` (the arbiter panel snapshot) |
+| `voted` | `vote` | `(name, intent_id, arbiter: Address)` | `resolution` |
+| `tallied` | `tally` | `(name, intent_id)` | `outcome` |
+| `vote_expired` | `tally` | `(name)` | `intent_id: BytesN<32>` |
+
+## `treasury_streams` — additional events
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `pause` | `pause` | `(name)` | `()` |
+| `unpause` | `unpause` | `(name)` | `()` |
+| `top_up` | `top_up` | `(name, stream_id: u64)` | `(sender: Address, additional_amount: i128, new_total: i128)` |
+| `extend` | `extend` | `(name, stream_id: u64)` | `(sender: Address, new_end: u64, total: i128)` |
+
+## `intent_periphery` — additional events
+
+| Event | Emitted by | Topics | Data |
+|-------|-----------|--------|------|
+| `settlement_proposed` | `propose_settlement` | `(name)` | `settlement: Address` |
+
+## `fee_router`
+
+`fee_router` is a pure library crate and publishes no events (confirmed: no
+`publish` call sites in `fee_router/src/lib.rs`).

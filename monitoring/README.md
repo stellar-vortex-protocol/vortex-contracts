@@ -26,7 +26,9 @@ Set environment variables before running:
 # Soroban RPC endpoint
 export SOROBAN_RPC_URL="https://soroban-mainnet.stellar.org"
 
-# Contract address to monitor
+# Contract address to monitor (56-char Stellar contract ID: "C" + 55 base32
+# characters A-Z/2-7). A malformed ID aborts startup with a non-zero exit code
+# and an error message naming the offending value.
 export CONTRACT_ID="C..."
 
 # Stellar network (mainnet | testnet)

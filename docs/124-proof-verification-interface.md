@@ -152,6 +152,36 @@ overhead, suitable for Wormhole's generic message payload).
 
 `ProofRegistry.receive_message` deserializes this payload after VAA verification.
 
+### 3.5 Verification failure reasons
+
+Verification failures are typed `proof_registry::Error` values (issue #702), so
+an operator or caller can tell the cases apart:
+
+| Case | Error | Raised by |
+|------|-------|-----------|
+| Malformed proof (payload not exactly 102 bytes / undecodable) | `InvalidPayload` (6) | `receive_message`, `receive_message_axelar` |
+| Unsupported chain (no emitter/source configured for the chain) | `UnsupportedChain` (13) | `receive_message`, `receive_message_axelar` |
+| Emitter not the one authorized for its chain | `EmitterNotAuthorized` (3) | `receive_message`, `receive_message_axelar` |
+| Payload chain differs from signed emitter chain | `EmitterChainMismatch` (9) | `receive_message` |
+| Proof already registered / VAA replayed | `ProofAlreadyExists` (4) / `VaaAlreadyProcessed` (8) | `receive_message` |
+| No proof for the intent | `ProofNotFound` (5) | `get_fresh_proof` |
+| Expired proof (older than `PROOF_VALIDITY_WINDOW`) | `ProofStale` (12) | `get_fresh_proof` |
+
+The success path is unchanged.
+
+`has_proof` remains the stable `bool` interface. Callers that need the failure
+reason use the typed sibling (issue #676), added non-breakingly:
+
+```rust
+/// Err(ProofNotFound) | Err(ProofStale) | Err(EmitterChainMismatch)
+fn verify_proof_checked(env: Env, intent_id: BytesN<32>, expected_chain_id: u32)
+    -> Result<ProofRecord, Error>;
+```
+
+`intent_settlement::fill_intent` continues to map these cases to its own
+`ProofNotFound` / `ProofChainMismatch` codes (see
+[129](./129-proof-mismatch-fallback.md)); it needs no change.
+
 ---
 
 ## 4. Changes to `intent_settlement`
