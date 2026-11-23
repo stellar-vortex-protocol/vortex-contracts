@@ -293,6 +293,25 @@ data   : <bond_amount: i128>
 
 ---
 
+#### `solver_registration_rejected`
+
+Emitted by `register_solver` when `solver` is already registered. The call
+returns successfully (a panic would roll back the event); no state changes and
+no bond is transferred.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **topics[0]** | `Symbol` | `"solver_registration_rejected"` |
+| **topics[1]** | `Address` | The solver address |
+| **data** | `u32` | Reason code — `5` (`SolverAlreadyRegistered`) |
+
+```
+topics : ("solver_registration_rejected", <solver: Address>)
+data   : <reason: u32>
+```
+
+---
+
 #### `solver_deregistered`
 
 Emitted by `deregister_solver` after the full bond refund transfer.

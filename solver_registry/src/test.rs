@@ -163,8 +163,8 @@ fn register_twice_rejected() {
     let ctx = setup();
     ctx.register(FLOOR);
     ctx.mint(&ctx.solver, FLOOR);
-    let res = ctx.client().try_register_solver(&ctx.solver, &FLOOR);
-    assert_eq!(res, Err(Ok(Error::SolverAlreadyRegistered.into())));
+    ctx.client().register_solver(&ctx.solver, &FLOOR);
+    assert_eq!(ctx.client().get_solver(&ctx.solver).bond_amount, FLOOR);
 }
 
 #[test]
