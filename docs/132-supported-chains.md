@@ -323,6 +323,17 @@ document.
 `intent_settlement/src/lib.rs` is the single source of truth for this mapping.
 An unmapped `src_chain` string fails closed with `Error::SrcChainNotSupported`.
 
+**No supported-chain cache in `proof_registry`** (issue #664): `proof_registry`
+does not build a supported-chain list on the verification path. Each
+`receive_message` / `receive_message_axelar` call does a single keyed
+instance-storage read (`ProofKey::AuthorizedEmitter(chain_id)` or
+`ProofKey::AuthorizedAxelarSource(chain_name)`) for the one chain in the
+message, so there is no per-call loop to cache. Storing the whole set under one
+key plus a version counter would make every call deserialize all chains, which
+is slower than the current O(1) lookup, so it is deliberately not done. Admin
+changes (`set_authorized_emitter` / `remove_authorized_emitter`) take effect
+on the next call with no invalidation needed.
+
 ---
 
 *Closes #132*
