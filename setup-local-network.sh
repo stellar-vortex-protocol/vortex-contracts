@@ -329,10 +329,26 @@ deploy_timelock() {
 }
 
 # ---------------------------------------------------------------------------
+# Prerequisites
+# ---------------------------------------------------------------------------
+check_prereqs() {
+  local bin missing=""
+  for bin in stellar docker-compose; do
+    command -v "$bin" &>/dev/null || missing="$missing $bin"
+  done
+  if [ -n "$missing" ]; then
+    error "Missing required tool(s):$missing. Install them per CONTRIBUTING.md (Toolchain Setup) and docs/local-integration-testing.md (Prerequisites)."
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
   local command="${1:-start}"
+
+  check_prereqs
 
   case "$command" in
     start)
