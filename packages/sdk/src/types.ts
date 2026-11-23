@@ -8,6 +8,18 @@
 import { Address, i128, u32, u64, BytesN } from 'stellar-sdk';
 
 /**
+ * Thrown when a contract ID is not a valid Stellar `C...` strkey.
+ *
+ * A valid Stellar contract ID is a 56-character strkey starting with `C`.
+ */
+export class InvalidContractIdError extends Error {
+  constructor(contractId: string) {
+    super(`Invalid contract ID "${contractId}": expected a 56-character "C..." strkey`);
+    this.name = 'InvalidContractIdError';
+  }
+}
+
+/**
  * Core Intent Lifecycle States
  */
 export enum IntentState {
