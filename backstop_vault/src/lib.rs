@@ -32,8 +32,8 @@ use soroban_sdk::{
     Address, BytesN, Env, Symbol,
 };
 use vortex_common::{
-    require_admin, CommonError, INSTANCE_TTL_EXTEND_TO, INSTANCE_TTL_THRESHOLD,
-    PERSISTENT_TTL_EXTEND_TO, PERSISTENT_TTL_THRESHOLD,
+    INSTANCE_TTL_EXTEND_TO, INSTANCE_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO,
+    PERSISTENT_TTL_THRESHOLD,
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -592,9 +592,7 @@ impl BackstopVault {
             .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
-        if let Err(CommonError::Unauthorized) = require_admin(&env, &admin) {
-            panic_with_error!(&env, Error::Unauthorized);
-        }
+        admin.require_auth();
         env.storage()
             .instance()
             .set(&DataKey::EmergencyMode, &enabled);
