@@ -466,8 +466,9 @@ section covering CI, branch protection, and required-check management.
 
 ### Local development commands
 
-A `Makefile` (and equivalent `justfile`) is provided at the repo root so you
-never need to copy-paste raw multi-flag commands from the README.
+A `Makefile` (with a companion `justfile`, where `just all` runs `make all`) is
+provided at the repo root so you never need to copy-paste raw multi-flag
+commands from the README.
 
 ```bash
 # inside the repo root
