@@ -47,9 +47,10 @@ A formal RFC proposal is required for any of the following admin actions:
 - `propose_add_dst_token(token)` — adds a destination token to the allowlist.
 - `propose_remove_dst_token(token)` — removes a destination token from the allowlist.
 - `set_config(...)` — any change to protocol constants (bond multipliers, TTL settings,
-  timelock duration, etc.). Note: `set_config` does not have an on-chain timelock yet
-  but will once [#35](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/35)
-  and [#43](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/43) land.
+  timelock duration, etc.). Note: `set_config` does not have an on-chain timelock yet;
+  a `propose_config` / `execute_config` pattern is tracked in
+  [#220](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/220)
+  (currently open — no timelocked config path exists in the contract today).
 
 A proposal is **not** required for:
 
@@ -248,6 +249,6 @@ allowlist and cannot be a destination. This blocks an entire category of intent.
 - [**`docs/114-multisig-admin-design.md`**](../docs/114-multisig-admin-design.md) —
   How admin privileges are structured and how multi-sig can be used.
 - [**`CONTRIBUTING.md`**](../CONTRIBUTING.md) — On-chain code review and PR process.
-- [**Issue #35**](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/35),
-  [**Issue #43**](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/43) —
-  Forthcoming timelocked `set_config` and bond-multiplier changes.
+- [**Issue #220**](https://github.com/stellar-vortex-protocol/vortex-contracts/issues/220) —
+  Tracking timelocked governance for `set_config` protocol-parameter changes
+  (`propose_config` / `execute_config` pattern; not yet implemented).

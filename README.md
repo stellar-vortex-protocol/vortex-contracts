@@ -344,3 +344,167 @@ never raised anywhere in `intent_settlement/src/lib.rs`.
 | 28 | `InvalidSrcToken` | 28 | `batch_cancel_intent`, `batch_fill_intent`, `batch_submit_intent`, `fill_intent`, `get_solver_intents`, `submit_intent` | #127: `submit_intent` was called with a `src_token` whose format does not match the conventions of the declared `src_chain`. EVM chains (ethereum, base, polygon, arbitrum, optimism): expect a `0x`-prefixed 42-character hex string (e.g. `"0xA0b86991…"`). Solana: expects a base58 string between 32 and 44 characters long with no `0x` prefix. If `src_chain` is unknown this error is never raised — unknown chains bypass token-format validation so the allowlist remains the sole gate. |
 | 29 | `ProofRegistryNotSet` | 30 | `batch_cancel_intent`, `batch_fill_intent`, `fill_intent`, `get_solver_intents` | docs/129 §2.4 (code 24). `fill_intent` was called with `require_proof = true` but no `DataKey::ProofRegistry` has been set by the admin. Configuration error — no slash, intent stays `Accepted`. |
 | 30 | `ProofNotFound` | 31 | `batch_cancel_intent`, `batch_fill_intent`, `fill_intent`, `get_solver_intents` | docs/129 §2.3 (code 25). `ProofRegistry.get_proof(intent_id)` returned `None`: no verified source-chain deposit for this intent yet. Intent stays `Accepted`; the solver should retry once the VAA is relayed, or be sl
+
+
+<!-- END GENERATED: error-reference -->
+
+---
+
+### `solver_registry`
+
+Off-chain solver reputation and bonding contract (`solver_registry/src/lib.rs`).
+Full ABI documented in [`docs/solver-registry-interface.md`](./docs/solver-registry-interface.md).
+
+- `initialize(admin, bond_token, fee_recipient)` — one-time setup; seeds the default tier table
+- `register_solver(solver, bond_amount)` / `stake(solver, amount)` / `unstake(solver, amount)` / `deregister_solver(solver)` — solver bond lifecycle
+- `record_fill(caller, solver, intent_id, amount)` — writer-only: increment fill count and cumulative volume
+- `record_failure(caller, solver, intent_id)` — writer-only: increment failure count
+- `slash(caller, solver, intent_id)` — writer-only: slash bond by tier-specific `slash_bps`, transfer to fee recipient
+- `lock_obligation(caller, solver, intent_id)` — writer-only: mark an intent as open for `solver`; returns updated open-obligation count
+- `release_obligation(caller, solver, intent_id)` — writer-only: clear the obligation once settled or slashed; returns updated count
+- `get_open_obligations(solver)` — read-only: number of currently locked obligations for a solver
+- `has_obligation(solver, intent_id)` — read-only: `true` if the given intent is still an open obligation for `solver`
+- `get_tier(solver)` / `tier_for(score_bps, bond_amount)` / `get_tier_table()` — tier lookups
+- `get_fill_window_bonus_pct(tier)` / `get_slash_bps(tier)` / `get_fee_rebate_bps(tier)` — per-tier perk values
+- `get_reputation_score(solver)` / `compute_reputation_score(record)` — reputation score (0–10 000 bps)
+- `get_solver(solver)` / `get_solver_count()` — solver record reads
+- `propose_writer(new_writer)` / `execute_writer(new_writer)` / `cancel_writer()` / `get_pending_writer()` — timelocked writer rotation (48 h)
+- `propose_admin(new_admin)` / `accept_admin(new_admin)` / `cancel_admin_transfer()` / `get_pending_admin()` — timelocked admin handover
+- `set_tier_threshold(tier, min_bond, min_score_bps)` — admin-tunable tier gates (tiers 1–4 only)
+- `is_intent_recorded(action, intent_id)` — idempotency guard for write-path calls
+- `get_writer()` / `get_admin()` / `get_bond_token()` — configuration reads
+
+---
+
+### `proof_registry`
+
+Cross-chain deposit proof store (`proof_registry/src/lib.rs`). Accepts Wormhole VAAs
+and Axelar GMP messages, verifies emitter authorization, and persists a `ProofRecord`
+keyed by `intent_id` for `intent_settlement` to query via `fill_intent`.
+
+- `initialize(admin, configurator, wormhole_core, axelar_gateway)` — one-time setup
+- `receive_message(vaa)` — ingest a Wormhole VAA; verifies emitter, decodes the intent deposit payload, stores proof
+- `receive_message_axelar(source_chain, source_address, payload)` — ingest an Axelar GMP message; same decode/store path
+- `set_authorized_emitter(chain_id, emitter)` / `remove_authorized_emitter(chain_id)` / `get_authorized_emitter(chain_id)` — Wormhole emitter allowlist
+- `set_authorized_axelar_source(chain_name, source_address)` / `remove_authorized_axelar_source(chain_name)` / `get_authorized_axelar_source(chain_name)` — Axelar source allowlist
+- `get_wormhole_core()` / `get_axelar_gateway()` — configured bridge addresses
+- `get_proof(intent_id)` / `has_proof(intent_id)` / `get_fresh_proof(intent_id)` — read the stored proof (panics on missing for `get_fresh_proof`)
+- `mock_set_proof(record)` / `mock_remove_proof(intent_id)` — test-only helpers (compile-gated)
+
+---
+
+### `reputation_badge`
+
+Non-transferable (soulbound) on-chain tier badge for solvers (`reputation_badge/src/lib.rs`).
+Design rationale in [`docs/242-reputation-tier-badge-design.md`](./docs/242-reputation-tier-badge-design.md) (#242).
+
+- `initialize(admin, solver_registry)` — one-time setup; `solver_registry` is optional and can be wired later
+- `set_solver_registry(solver_registry)` / `get_solver_registry()` — update the registry address permitted to drive badge changes
+- `mint_badge(caller, solver, tier)` — mint or overwrite `solver`'s badge to `tier` (Bronze–Platinum); caller must be admin or registered `solver_registry`
+- `burn_badge(caller, solver)` — remove badge when a solver drops to Unranked; caller must be admin or registered `solver_registry`
+- `get_badge(solver)` — `Option<Tier>`: `None` means Unranked
+
+---
+
+### `governor`
+
+On-chain governance contract for protocol parameter changes (`governor/src/lib.rs`).
+Voting power is derived from a solver's staked bond in `solver_registry`.
+
+- `initialize(admin, solver_registry, config)` — deploy-time setup
+- `update_config(config)` / `set_config(admin, config)` / `get_config()` — manage governance parameters (quorum, voting period, timelock delay)
+- `propose(caller, description, calls)` — open a governance proposal; returns `proposal_id`
+- `cancel(caller, proposal_id)` — proposer or admin can cancel before execution
+- `cast_vote(voter, proposal_id, vote_type, reason)` — record a For / Against / Abstain vote
+- `queue(proposal_id)` — move a passed proposal into the execution queue (starts the timelock)
+- `execute(proposal_id)` — execute a queued proposal once the timelock has elapsed
+- `state(proposal_id)` — `ProposalState`: Pending, Active, Succeeded, Defeated, Queued, Executed, Cancelled
+- `proposal(proposal_id)` / `list_proposals(start, limit)` / `get_proposal_count()` — proposal reads
+- `voting_power(account, ledger)` — historical voting power at a given ledger
+- `sync_power(account)` — write a checkpoint for `account`'s current bond weight
+
+---
+
+### `backstop_vault`
+
+LP-share vault that holds surplus collateral backing solver slashes (`backstop_vault/src/lib.rs`).
+
+- `initialize(admin, bond_token, settlement, min_deposit, withdrawal_cooldown_secs)` — one-time setup
+- `deposit(lp, amount)` — deposit bond token, receive proportional shares; returns shares minted
+- `withdraw(lp, shares)` — queue a withdrawal (enforces `withdrawal_cooldown_secs`); returns queued bond token amount
+- `process_queued_withdrawal(lp)` — permissionless: release a matured withdrawal to `lp`
+- `cover(caller, amount, recipient)` — settlement-only: transfer bond token to `recipient` as slash coverage, reduce vault assets
+- `receive_income(amount)` — pull income into the vault (increases share value for all LPs)
+- `rescue_tokens(token, amount, recipient)` — admin-only: recover non-bond tokens sent to the vault
+- `set_emergency_mode(enabled)` — admin-only: disable new deposits and queued withdrawals
+- `set_config(min_deposit, withdrawal_cooldown_secs)` / `get_config()` — tunable vault parameters
+- `get_vault_state()` — `(total_assets, total_shares, total_queued)` triple
+- `get_lp_position(lp)` — `(shares, queued_amount, queued_at)` for a given LP
+- `get_withdrawal_cooldown(lp)` — timestamp after which `process_queued_withdrawal` will succeed
+
+---
+
+### `fee_router`
+
+Distributes protocol fee receipts to a configurable set of weighted sinks (`fee_router/src/lib.rs`).
+
+- `initialize(governance, sinks, weight_delay)` — one-time setup; `sinks` is a list of `(address, weight_bps)` pairs
+- `on_fee_received(token, amount)` — called by `intent_settlement` on each fill; records fee accrual without an immediate transfer
+- `distribute(token)` — permissionless: push accrued fees to each sink proportional to their weight
+- `claim(sink, token)` — pull accrued share for `sink` (used when `distribute` reverts for a single sink due to fee-on-transfer tokens)
+- `propose_weights(caller, sinks)` / `apply_weights(caller)` / `pending_executable_at()` — timelocked weight rotation; `apply_weights` is callable only after `weight_delay` has elapsed
+- `governance()` / `weight_delay()` / `sinks()` — configuration reads
+- `balance_of(token)` — vault balance of a given token held by the router
+- `claimable(sink, token)` — unclaimed accrued balance for a given sink and token
+
+---
+
+### `intent_periphery`
+
+Read-aggregator proxy over `intent_settlement` (`intent_periphery/src/lib.rs`). Provides
+batched view calls for off-chain clients and frontends without duplicating settlement logic.
+
+- `initialize(admin, settlement)` — one-time setup; records the settlement contract address
+- `propose_settlement(settlement)` / `accept_settlement()` — timelocked settlement pointer rotation
+- `get_settlement()` / `get_pending_settlement()` / `get_interface_version()` — configuration reads
+- `get_stats(solver)` / `get_solver(solver)` / `get_intent(intent_id)` / `get_fee_schedule(solver)` / `get_protocol_health()` — individual forwarded views
+- `list_solvers(start, limit)` / `list_open_intents(start, limit)` / `list_intents_by_user(user, start, limit)` — paginated list views forwarded to settlement
+- `get_dashboard_snapshot()` — single call that returns a map with stats, health, and top-of-book data
+- `batch_get_stats_and_health()` / `batch_list_solvers_and_intents(start, limit)` / `batch_get_solver_and_fee_schedule(solver)` / `batch_get_intent_and_health(intent_id)` / `batch_two_views(view_a, view_b)` — multi-read batches to reduce round-trips
+
+---
+
+### `timelock`
+
+General-purpose timelocked executor (`timelock/src/lib.rs`). Used as the execution
+backend for governance proposals produced by `governor`.
+
+- `__constructor(min_delay, grace_period, proposers, executors, admin)` — deploy-time setup; seeds role tables
+- `grant_role(role, account)` / `revoke_role(role, account)` / `has_role(role, account)` — role management (roles: `proposer`, `executor`, `canceller`, `admin`)
+- `get_min_delay()` / `update_delay(new_delay)` / `get_grace_period()` — delay configuration
+- `schedule(id, calls, predecessor, salt, delay)` — queue a single operation; `delay ≥ min_delay`
+- `schedule_batch(calls, predecessor, salt, delay)` — queue multiple calls under one operation id
+- `cancel(id)` — canceller-only: remove a pending operation
+- `execute(id)` — executor-only: run a ready operation; fails if `min_delay` has not elapsed or grace period has expired
+- `get_operation_state(id)` — `OperationState`: Unknown, Waiting, Ready, Done
+- `is_operation_done(id)` — convenience boolean check
+- `hash_operation(calls, predecessor, salt)` — pure: compute the operation id
+
+---
+
+### `treasury_streams`
+
+Token vesting / streaming contract for protocol-controlled treasury disbursements
+(`treasury_streams/src/lib.rs`). Governed by `governor` / `timelock`.
+
+- `initialize(governor)` — one-time setup; records the governing address
+- `propose_governor_transfer(new_governor)` / `accept_governor_transfer()` — timelocked governor handover
+- `pause()` / `unpause()` / `is_paused()` — governor-only circuit breaker
+- `create_stream(recipient, token, total_amount, start, end, cliffed)` — create a linear vesting stream; returns `stream_id`
+- `withdraw(stream_id)` — recipient-only: pull all vested-but-unclaimed tokens; returns amount transferred
+- `cancel(stream_id)` — governor-only: cancel a stream and return unvested tokens to the treasury
+- `top_up(stream_id, additional_amount)` — governor-only: add tokens to an active stream (extends total without changing the rate)
+- `extend(stream_id, new_end)` — governor-only: push the stream end date out
+- `balance_of(stream_id)` — currently vested and unclaimed balance
+- `get_stream(stream_id)` / `get_stream_count()` — stream reads
+- `list_streams_by_sender(sender, start, limit)` / `list_streams_by_recipient(recipient, start, limit)` — paginated index lookups

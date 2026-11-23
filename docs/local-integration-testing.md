@@ -53,6 +53,12 @@ cd intent_settlement && cargo build --target wasm32-unknown-unknown --release
 cd ../solver_registry && cargo build --target wasm32-unknown-unknown --release
 cd ../proof_registry && cargo build --target wasm32-unknown-unknown --release
 cd ../reputation_badge && cargo build --target wasm32-unknown-unknown --release
+cd ../governor && cargo build --target wasm32-unknown-unknown --release
+cd ../backstop_vault && cargo build --target wasm32-unknown-unknown --release
+cd ../fee_router && cargo build --target wasm32-unknown-unknown --release
+cd ../intent_periphery && cargo build --target wasm32-unknown-unknown --release
+cd ../timelock && cargo build --target wasm32-unknown-unknown --release
+cd ../treasury_streams && cargo build --target wasm32-unknown-unknown --release
 ```
 
 ### 3. Deploy and Test
@@ -168,6 +174,132 @@ stellar contract invoke \
   -- initialize --admin test-account --fee_recipient test-account
 
 echo "Intent Settlement Contract ID: $INTENT_ID"
+
+# Deploy solver_registry
+SOLVER_REG_ID=$(stellar contract deploy \
+  --wasm solver_registry/target/wasm32-unknown-unknown/release/vortex_solver_registry.wasm \
+  --source test-account \
+  --network $STELLAR_NETWORK)
+
+stellar contract invoke \
+  --id $SOLVER_REG_ID \
+  --source test-account \
+  --network $STELLAR_NETWORK \
+  -- initialize --admin test-account --bond_token <BOND_TOKEN_ADDRESS> --fee_recipient test-account
+
+echo "Solver Registry Contract ID: $SOLVER_REG_ID"
+
+# Deploy proof_registry
+PROOF_REG_ID=$(stellar contract deploy \
+  --wasm proof_registry/target/wasm32-unknown-unknown/release/vortex_proof_registry.wasm \
+  --source test-account \
+  --network $STELLAR_NETWORK)
+
+stellar contract invoke \
+  --id $PROOF_REG_ID \
+  --source test-account \
+  --network $STELLAR_NETWORK \
+  -- initialize --admin test-account --configurator test-account \
+     --wormhole_core <WORMHOLE_CORE_ADDRESS> --axelar_gateway <AXELAR_GATEWAY_ADDRESS>
+
+echo "Proof Registry Contract ID: $PROOF_REG_ID"
+
+# Deploy reputation_badge
+BADGE_ID=$(stellar contract deploy \
+  --wasm reputation_badge/target/wasm32-unknown-unknown/release/vortex_reputation_badge.wasm \
+  --source test-account \
+  --network $STELLAR_NETWORK)
+
+stellar contract invoke \
+  --id $BADGE_ID \
+  --source test-account \
+  --network $STELLAR_NETWORK \
+  -- initialize --admin test-account --solver_registry $SOLVER_REG_ID
+
+echo "Reputation Badge Contract ID: $BADGE_ID"
+
+# Deploy governor
+GOVERNOR_ID=$(stellar contract deploy \
+  --wasm governor/target/wasm32-unknown-unknown/release/vortex_governor.wasm \
+  --source test-account \
+  --network $STELLAR_NETWORK)
+
+stellar contract invoke \
+  --id $GOVERNOR_ID \
+  --source test-account \
+  --network $STELLAR_NETWORK \
+  -- initialize --admin test-account --solver_registry $SOLVER_REG_ID \
+     --config '{"quorum_bps":1000,"voting_period_ledgers":17280,"timelock_delay":172800}'
+
+echo "Governor Contract ID: $GOVERNOR_ID"
+
+# Deploy backstop_vault
+BACKSTOP_ID=$(stellar contract deploy \
+  --wasm backstop_vault/target/wasm32-unknown-unknown/release/vortex_backstop_vault.wasm \
+  --source test-account \
+  --network $STELLAR_NETWORK)
+
+stellar contract invoke \
+  --id $BACKSTOP_ID \
+  --source test-account \
+  --network $STELLAR_NETWORK \
+  -- initialize --admin test-account --bond_token <BOND_TOKEN_ADDRESS> \
+     --settlement $INTENT_ID --min_deposit 500000000 --withdrawal_cooldown_secs 86400
+
+echo "Backstop Vault Contract ID: $BACKSTOP_ID"
+
+# Deploy fee_router
+FEE_ROUTER_ID=$(stellar contract deploy \
+  --wasm fee_router/target/wasm32-unknown-unknown/release/vortex_fee_router.wasm \
+  --source test-account \
+  --network $STELLAR_NETWORK)
+
+stellar contract invoke \
+  --id $FEE_ROUTER_ID \
+  --source test-account \
+  --network $STELLAR_NETWORK \
+  -- initialize --governance $GOVERNOR_ID \
+     --sinks '[{"address":"test-account","weight_bps":10000}]' \
+     --weight_delay 172800
+
+echo "Fee Router Contract ID: $FEE_ROUTER_ID"
+
+# Deploy intent_periphery
+PERIPHERY_ID=$(stellar contract deploy \
+  --wasm intent_periphery/target/wasm32-unknown-unknown/release/vortex_intent_periphery.wasm \
+  --source test-account \
+  --network $STELLAR_NETWORK)
+
+stellar contract invoke \
+  --id $PERIPHERY_ID \
+  --source test-account \
+  --network $STELLAR_NETWORK \
+  -- initialize --admin test-account --settlement $INTENT_ID
+
+echo "Intent Periphery Contract ID: $PERIPHERY_ID"
+
+# Deploy timelock
+TIMELOCK_ID=$(stellar contract deploy \
+  --wasm timelock/target/wasm32-unknown-unknown/release/vortex_timelock.wasm \
+  --source test-account \
+  --network $STELLAR_NETWORK)
+
+# timelock uses __constructor; pass args at deploy time via --args
+echo "Timelock Contract ID: $TIMELOCK_ID"
+
+# Deploy treasury_streams
+TREASURY_ID=$(stellar contract deploy \
+  --wasm treasury_streams/target/wasm32-unknown-unknown/release/vortex_treasury_streams.wasm \
+  --source test-account \
+  --network $STELLAR_NETWORK)
+
+stellar contract invoke \
+  --id $TREASURY_ID \
+  --source test-account \
+  --network $STELLAR_NETWORK \
+  -- initialize --governor $GOVERNOR_ID
+
+echo "Treasury Streams Contract ID: $TREASURY_ID"
 ```
 
 ### Submit an Intent
@@ -220,6 +352,91 @@ Ensure the WASM binary was built in release mode:
 
 ```bash
 cd intent_settlement && cargo build --target wasm32-unknown-unknown --release
+```
+
+## Testing the Newer Contracts
+
+### `governor` + `timelock`
+
+The governance flow requires a live `solver_registry` (for voting power) and a deployed
+`timelock`. A minimal end-to-end test on the local network:
+
+```bash
+# 1. Register a solver so the account has voting power
+stellar contract invoke --id $SOLVER_REG_ID --source test-account --network $STELLAR_NETWORK \
+  -- register_solver --solver test-account --bond_amount 500000000
+
+# 2. Sync voting power checkpoint
+stellar contract invoke --id $GOVERNOR_ID --source test-account --network $STELLAR_NETWORK \
+  -- sync_power --account test-account
+
+# 3. Create a proposal (description + target calls encoded as JSON)
+stellar contract invoke --id $GOVERNOR_ID --source test-account --network $STELLAR_NETWORK \
+  -- propose --caller test-account --description '"test proposal"' --calls '[]'
+
+# 4. Cast a vote (For = 0)
+stellar contract invoke --id $GOVERNOR_ID --source test-account --network $STELLAR_NETWORK \
+  -- cast_vote --voter test-account --proposal_id 0 --vote_type 0 --reason '"lgtm"'
+```
+
+### `backstop_vault`
+
+```bash
+# Deposit bond token as an LP
+stellar contract invoke --id $BACKSTOP_ID --source test-account --network $STELLAR_NETWORK \
+  -- deposit --lp test-account --amount 500000000
+
+# Check LP position (shares, queued_amount, queued_at)
+stellar contract invoke --id $BACKSTOP_ID --source test-account --network $STELLAR_NETWORK \
+  -- get_lp_position --lp test-account
+
+# Queue a withdrawal
+stellar contract invoke --id $BACKSTOP_ID --source test-account --network $STELLAR_NETWORK \
+  -- withdraw --lp test-account --shares 500000000
+```
+
+### `fee_router`
+
+```bash
+# Trigger a fee distribution for the bond token
+stellar contract invoke --id $FEE_ROUTER_ID --source test-account --network $STELLAR_NETWORK \
+  -- distribute --token <BOND_TOKEN_ADDRESS>
+
+# Check claimable balance for a sink
+stellar contract invoke --id $FEE_ROUTER_ID --source test-account --network $STELLAR_NETWORK \
+  -- claimable --sink test-account --token <BOND_TOKEN_ADDRESS>
+```
+
+### `intent_periphery`
+
+All calls are read-only proxies; no auth required. Wire it to the deployed settlement first:
+
+```bash
+# Verify the periphery points at the right settlement contract
+stellar contract invoke --id $PERIPHERY_ID --source test-account --network $STELLAR_NETWORK \
+  -- get_settlement
+
+# Fetch a dashboard snapshot (stats + health in one round-trip)
+stellar contract invoke --id $PERIPHERY_ID --source test-account --network $STELLAR_NETWORK \
+  -- get_dashboard_snapshot
+```
+
+### `treasury_streams`
+
+```bash
+# Create a 30-day linear stream for a contributor (no cliff)
+stellar contract invoke --id $TREASURY_ID --source test-account --network $STELLAR_NETWORK \
+  -- create_stream \
+     --recipient <RECIPIENT_ADDRESS> \
+     --token <BOND_TOKEN_ADDRESS> \
+     --total_amount 10000000000 \
+     --start $(date +%s) \
+     --end $(($(date +%s) + 2592000)) \
+     --cliffed false
+
+# Recipient withdraws vested tokens
+stellar contract invoke --id $TREASURY_ID --source test-account --network $STELLAR_NETWORK \
+  -- withdraw --stream_id 0
 ```
 
 ## Next Steps
