@@ -1,7 +1,7 @@
 //! Issue #549: fail-closed behaviour of the oracle adapter and its wiring.
 extern crate std;
 
-use super::oracle::{fetch_price, weight_bps, OracleFault, PriceData};
+use super::oracle::{fetch_price, weight_bps, OracleError, PriceData};
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::{Address as _, Ledger}, Address, Env,
 };
@@ -38,11 +38,11 @@ fn setup() -> (Env, Address, MockOracleClient<'static>, Address, Address) {
 #[test]
 fn fetch_price_fail_closed_paths() {
     let (env, id, c, a, _) = setup();
-    assert_eq!(fetch_price(&env, &id, &a), Err(OracleFault::NotAvailable));
+    assert_eq!(fetch_price(&env, &id, &a), Err(OracleError::NotAvailable));
     c.set(&a, &100, &7, &(10_000 - 301));
-    assert_eq!(fetch_price(&env, &id, &a), Err(OracleFault::Stale));
+    assert_eq!(fetch_price(&env, &id, &a), Err(OracleError::Stale));
     c.set(&a, &0, &7, &10_000);
-    assert_eq!(fetch_price(&env, &id, &a), Err(OracleFault::ZeroOrNegative));
+    assert_eq!(fetch_price(&env, &id, &a), Err(OracleError::ZeroOrNegative));
     c.set(&a, &100, &7, &(10_000 - 300));
     assert_eq!(fetch_price(&env, &id, &a), Ok((100, 7)));
 }
@@ -72,6 +72,6 @@ fn trapping_oracle_is_a_fault_not_a_revert() {
     let (env, _, _, a, b) = setup();
     // An address with no contract behind it: lastprice call fails.
     let dead = Address::generate(&env);
-    assert_eq!(fetch_price(&env, &dead, &a), Err(OracleFault::NotAvailable));
+    assert_eq!(fetch_price(&env, &dead, &a), Err(OracleError::NotAvailable));
     assert_eq!(weight_bps(&env, Some(&dead), &a, &b), 10_000);
 }
