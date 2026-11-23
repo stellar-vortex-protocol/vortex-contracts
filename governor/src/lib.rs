@@ -127,6 +127,7 @@ pub enum GovernorError {
     InvalidQuorum = 21,
     Unauthorized = 22,
     NotAuthorized = 23,
+    ExecutionFailed = 24,
 }
 
 #[contracttype]
@@ -431,12 +432,18 @@ impl Governor {
         // Ask the timelock to execute the scheduled call. The timelock performs
         // the actual `invoke_contract` on the proposal's target.
         let args: Vec<Val> = Vec::new(&env);
-        env.invoke_contract::<Val>(
+        let result: Result<Result<Val, _>, Result<soroban_sdk::Error, _>> = env.try_invoke_contract(
             &config.timelock,
             &Symbol::new(&env, "execute"),
             (proposal.target.clone(), proposal.function.clone(), proposal.calldata.clone(), args)
                 .into_val(&env),
         );
+        // On failure, return an error instead of marking the proposal executed.
+        // Soroban rolls back all state (including the event) when an entrypoint errors,
+        // so the proposal stays Queued and can be retried.
+        if !matches!(result, Ok(Ok(_))) {
+            return Err(GovernorError::ExecutionFailed);
+        }
         proposal.executed = true;
         let proposal_key = Self::proposal_key(&env, proposal_id);
         env.storage().persistent().set(&proposal_key, &proposal);
