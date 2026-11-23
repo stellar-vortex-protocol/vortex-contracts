@@ -386,7 +386,12 @@ impl BackstopVault {
             panic_with_error!(&env, Error::VaultInsolvent);
         }
 
-        // Normal path: burn shares, update totals, transfer assets.
+        // Normal path: transfer assets first so a failed transfer leaves shares intact.
+        let bond_token: Address = env.storage().instance().get(&DataKey::BondToken).unwrap();
+        token::Client::new(&env, &bond_token)
+            .transfer(&env.current_contract_address(), &lp, &assets_out);
+
+        // Then burn shares and update totals.
         env.storage()
             .persistent()
             .set(&DataKey::Shares(lp.clone()), &(lp_shares - shares));
@@ -397,10 +402,6 @@ impl BackstopVault {
             .instance()
             .set(&DataKey::TotalAssets, &(total_assets - assets_out));
         Self::bump_persistent_ttl(&env, &DataKey::Shares(lp.clone()));
-
-        let bond_token: Address = env.storage().instance().get(&DataKey::BondToken).unwrap();
-        token::Client::new(&env, &bond_token)
-            .transfer(&env.current_contract_address(), &lp, &assets_out);
 
         env.events().publish(
             (Symbol::new(&env, "withdraw"), lp),
