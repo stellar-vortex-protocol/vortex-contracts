@@ -27,12 +27,15 @@ __pycache__/
 # Editor / IDE
 .DS_Store
 .idea/
+.vscode/*
 !.vscode/extensions.json
 *.swp
 *.swo
 *~
 
 # Environment / secrets
+.env
+.env.*
 !.env.example
 !.env.local.example
 
@@ -91,4 +94,3 @@ perf.data*
 
 # Quint ITF trace files (generated; not committed — see spec/traces/README.md)
 spec/traces/*.itf.json
-config.bat
