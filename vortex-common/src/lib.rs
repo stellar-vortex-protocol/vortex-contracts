@@ -19,6 +19,8 @@ pub enum CommonError {
   Unauthorized = 1,
   /// The admin key is absent from storage (contract not initialized).
   NotInitialized = 2,
+  /// A bounded on-chain text field exceeded its contract-specific limit.
+  DescriptionTooLong = 3,
 }
 
 // ─── TTL Constants (Soroban Ledger Entry Lifecycle) ──────────────────────────

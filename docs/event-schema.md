@@ -585,6 +585,55 @@ Emitted by `execute_set_policy`.
 
 ---
 
+## Current `intent_settlement` additions
+
+The following events are emitted by the current `intent_settlement` contract
+and supplement the catalogue above. Every row has `emitting crate =
+intent_settlement`; topic tuples and payloads are shown exactly as published.
+This table deliberately does not restate the passive-expiry behaviour covered
+by [111-expire-intent-event-coverage.md](111-expire-intent-event-coverage.md).
+
+| Topic tuple | Data shape | Emitting entrypoint |
+|---|---|---|
+| `("fee_recipient_proposal_cancelled",)` | `pending_recipient: Address` | `cancel_pending_fee_recipient` |
+| `("admin_transfer_proposed",)` | `(new_admin: Address, eta: u64)` | `propose_admin_transfer` |
+| `("upgrade_proposed",)` | `(wasm_hash: BytesN<32>, eta: u64)` | `propose_upgrade` |
+| `("upgraded",)` | `wasm_hash: BytesN<32>` | `execute_upgrade` |
+| `("migrated",)` | `(previous_version: u32, current_version: u32)` | `migrate` |
+| `("dst_token_add_proposed",)` | `(token: Address, eta: u64)` | `propose_add_dst_token` |
+| `("dst_token_add_proposal_cancelled",)` | `token: Address` | `cancel_pending_dst_token_add` |
+| `("dst_token_remove_proposed",)` | `(token: Address, eta: u64)` | `propose_remove_dst_token` |
+| `("dst_token_remove_proposal_cancelled",)` | `token: Address` | `cancel_pending_dst_token_remove` |
+| `("chain_onboarding_proposed",)` | `(name: String, wormhole_id: u32, eta: u64)` | `propose_chain_onboarding` |
+| `("chain_onboarding_executed",)` | `(name: String, wormhole_id: u32)` | `execute_chain_onboarding` |
+| `("chain_offboarding_executed",)` | `name: String` | `execute_chain_offboarding` |
+| `("pauser_updated",)` | `pauser: Address` | `set_pauser` |
+| `("proof_registry_set",)` | `registry: Address` | `set_proof_registry` |
+| `("intent_amended", user: Address)` | `(intent_id: BytesN<32>, old_min: i128, new_min: i128, deadline: u64)` | `amend_intent` |
+| `("fill_begun",)` | `(intent_id: BytesN<32>, solver: Address, amount: i128)` | `begin_fill` |
+| `("fill_begun", solver: Address)` | `(intent_id: BytesN<32>, amount: i128, dispute_deadline: u64)` | `begin_fill_with_escrow` |
+| `("bid_window_enabled",)` | `enabled: bool` | `set_bid_window_enabled` |
+| `("bid_submitted", solver: Address)` | `(intent_id: BytesN<32>, quoted_dst_amount: i128)` | `bid_intent` |
+| `("intent_accepted", solver: Address)` | `(intent_id: BytesN<32>, deadline: u64)` | `settle_bids` |
+| `("bids_settled",)` | `(intent_id: BytesN<32>, winning_quote: i128)` | `settle_bids` |
+| `("bids_settled_no_winner",)` | `intent_id: BytesN<32>` | `settle_bids` |
+| `("arbiter_updated",)` | `arbiter: Address` | `set_arbiter` |
+| `("arbiter_panel_set",)` | `panel: Address` | `set_arbiter_panel` |
+| `("fill_disputed", user: Address)` | `intent_id: BytesN<32>` | `dispute_fill` |
+| `("dispute_resolved", solver: Address)` | `(intent_id: BytesN<32>, solver_payout: i128, slash_amount: i128)` | `resolve_dispute` |
+| `("fill_released", solver: Address)` | `(intent_id: BytesN<32>, solver_payout: i128)` | `release_fill` |
+| `("bond_token_allowed",)` | `token: Address` | `add_allowed_bond_token` |
+| `("bond_token_disallowed",)` | `token: Address` | `remove_allowed_bond_token` |
+| `("bond_token_min_set",)` | `(token: Address, amount: i128)` | `set_min_bond_for_token` |
+| `("outbound_intent_submitted", user: Address)` | `outbound_intent_id: BytesN<32>` | `submit_outbound_intent` |
+| `("outbound_intent_accepted", solver: Address)` | `outbound_intent_id: BytesN<32>` | `accept_outbound_intent` |
+| `("extension_granted", solver: Address)` | `(intent_id: BytesN<32>, deadline: u64)` | `request_extension` |
+| `("backstop_claimed", user: Address)` | `(intent_id: BytesN<32>, payout: i128, remaining_pool: i128)` | `claim_backstop` |
+| `("intent_retention_updated",)` | `retention_secs: u64` | `set_intent_retention` |
+| `("intent_closed",)` | `(intent_id: BytesN<32>, user: Address, state: IntentState)` | `close_intent` |
+| `("oracle_proposed",)` | `(oracle: Address, eta: u64)` | `propose_oracle` |
+| `("oracle_set",)` | `oracle: Address` | `execute_oracle` |
+
 # Event Schema — `backstop_vault`
 
 > Added in issue #519. Source of truth: `backstop_vault/src/lib.rs`.
@@ -868,16 +917,21 @@ data   : <settlement: Address>
 
 # Event Schema — `governor`
 
-> Added in issue #519. Source of truth: `governor/src/lib.rs`.
+> Source of truth: `governor/src/lib.rs`. Topics follow the conventions in
+> [113-event-topic-naming-conventions.md](113-event-topic-naming-conventions.md).
 
-The `governor` contract manages stake-weighted on-chain governance. As of this
-writing the governor does **not yet emit events** — state transitions are
-recorded entirely in persistent storage and can be reconstructed via the
-`state`, `get_proposal`, and `voting_power` view functions.
+| Topic tuple | Data shape | Emitting entrypoint | Emitting crate |
+|---|---|---|---|
+| `("init",)` | `(registry: Address, timelock: Address, voting_delay: u32, voting_period: u32, proposal_threshold: i128, quorum: i128)` | `initialize` | `governor` |
+| `("cfg_upd",)` | same shape as `init` | `update_config` | `governor` |
+| `("propose",)` | `(proposal_id: u32, proposer: Address, target: Address)` | `propose` | `governor` |
+| `("proposal_canceled", proposal_id: u32)` | `caller: Address` | `cancel` | `governor` |
+| `("vote",)` | `(proposal_id: u32, voter: Address, support: VoteType, power: i128)` | `cast_vote` | `governor` |
+| `("queue",)` | `(proposal_id: u32, eta: u32)` | `queue` | `governor` |
+| `("execute",)` | `(proposal_id: u32, target: Address, function: Symbol)` | `execute` | `governor` |
 
-Event emission for `proposed`, `voted`, `queued`, and `executed` transitions is
-tracked in the open roadmap item referenced by this issue. When those events are
-added, this section will be expanded with their full schemas.
+`expire_intent` coverage remains intentionally described in
+[111-expire-intent-event-coverage.md](111-expire-intent-event-coverage.md).
 
 ---
 

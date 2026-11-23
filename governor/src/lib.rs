@@ -1,8 +1,8 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address, BytesN, Env,
     IntoVal, Symbol, Val, Vec,
 };
-use vortex_common::require_admin;
+use vortex_common::{require_admin, CommonError};
 //! Stake-weighted Governor for protocol parameter changes.
 //!
 //! Voting power is derived from solver bond plus delegated stake recorded in
@@ -37,6 +37,11 @@ pub const PERSISTENT_TTL_EXTEND_TO: u32 = 1_000_000;
 
 /// Maximum number of proposals returned by a single `list_proposals` call.
 pub const MAX_LIST_LIMIT: u32 = 50;
+
+/// Maximum proposal-description length stored in persistent state. The
+/// instance-storage review does not set a text limit; 256 bytes matches the
+/// bounded user-facing string fields used by the protocol contracts.
+pub const MAX_PROPOSAL_DESCRIPTION_LEN: u32 = 256;
 
 /// Minimum voting delay (in ledgers) accepted at `initialize`/`update_config`.
 pub const MIN_VOTING_DELAY: u32 = 1;
@@ -236,9 +241,14 @@ impl Governor {
         target: Address,
         function: Symbol,
         calldata: BytesN<32>,
+        description: soroban_sdk::String,
     ) -> Result<u32, GovernorError> {
         proposer.require_auth();
         let config = Self::config(&env)?;
+
+        if description.len() > MAX_PROPOSAL_DESCRIPTION_LEN {
+            panic_with_error!(&env, CommonError::DescriptionTooLong);
+        }
 
         // A proposal may not target the governor itself: self-governance of the
         // voting rules would let a bare majority rewrite the rules mid-flight.
@@ -274,6 +284,11 @@ impl Governor {
         let proposal_key = Self::proposal_key(&env, id);
         env.storage().persistent().set(&proposal_key, &proposal);
         Self::bump_persistent_ttl(&env, &proposal_key);
+        // Keep descriptive text separate so the public Proposal layout stays
+        // stable while its storage remains bounded.
+        let description_key = Self::proposal_description_key(&env, id);
+        env.storage().persistent().set(&description_key, &description);
+        Self::bump_persistent_ttl(&env, &description_key);
         env.storage().instance().set(&Symbol::new(&env, "count"), &(id + 1));
         env.events().publish(
             (symbol_short!("propose"),),
@@ -480,6 +495,13 @@ impl Governor {
         Self::load_proposal(&env, proposal_id)
     }
 
+    /// Return the bounded description supplied with a proposal, if present.
+    pub fn proposal_description(env: Env, proposal_id: u32) -> Option<soroban_sdk::String> {
+        env.storage()
+            .persistent()
+            .get(&Self::proposal_description_key(&env, proposal_id))
+    }
+
     /// Total number of proposals ever created. Proposal ids are dense in
     /// `[0, count)`, so this doubles as the exclusive upper bound for
     /// pagination.
@@ -680,6 +702,10 @@ impl Governor {
 
     fn proposal_key(env: &Env, proposal_id: u32) -> (Symbol, u32) {
         (Symbol::new(env, "proposal"), proposal_id)
+    }
+
+    fn proposal_description_key(env: &Env, proposal_id: u32) -> (Symbol, u32) {
+        (Symbol::new(env, "proposal_desc"), proposal_id)
     }
 
     fn vote_key(env: &Env, proposal_id: u32, voter: &Address) -> (Symbol, GovernorKey) {

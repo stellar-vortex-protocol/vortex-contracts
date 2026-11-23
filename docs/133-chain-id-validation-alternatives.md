@@ -5,11 +5,12 @@
 This document compares two design approaches for validating the `src_chain` parameter
 in `submit_intent()`:
 
-1. **String Enum Approach** (current implementation)  
-   Validator accepts free-text chain names ("ethereum", "base", "solana") against an
-   allowlist of strings.
+1. **Canonical string + Wormhole mapping** (**shipped**)  
+   The public intent field remains a case-sensitive canonical string. The
+   contract maps the eight supported names to Wormhole IDs only where proof
+   verification requires an ID; unknown names fail closed.
 
-2. **Numeric Chain ID Approach** (this proposal)  
+2. **Numeric Chain ID Approach** (not shipped; retained as design history)  
    Validator accepts numeric chain identifiers (EVM chain IDs, Wormhole chain IDs) for
    less ambiguity in programmatic matching.
 
@@ -36,6 +37,18 @@ in `submit_intent()`:
 ---
 
 ## Design Option 1: String Enum (Current)
+
+### Shipped behaviour
+
+The implementation is not a free-text enum. `add_allowed_src_chain` can store
+any string for staged deployment configuration, while
+`src_chain_to_wormhole_id` and the internal proof mapper accept exactly:
+`ethereum → 2`, `base → 30`, `polygon → 5`, `arbitrum → 23`,
+`optimism → 24`, `avalanche → 6`, `bsc → 4`, and `solana → 1`.
+
+The numbers are **Wormhole chain IDs**, not EVM chain IDs. This is the chosen
+approach shipped in `intent_settlement/src/lib.rs`; the numeric interface below
+is a historical alternative and is not a contract entrypoint.
 
 ### Contract Interface
 
