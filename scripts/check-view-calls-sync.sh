@@ -13,8 +13,8 @@
 #   - Is declared as "pub fn"
 # This is conservative and may need refinement as the contract evolves.
 #
-# Collection request names are prefixed with the contract name (e.g.
-# "governor: get_config") so entries from different contracts stay distinct.
+# Collection request names are "<contract>_<function>" (e.g.
+# "governor_get_config") so entries from different contracts stay distinct.
 
 set -e
 
@@ -39,7 +39,7 @@ if [ ! -f "$COLLECTION_FILE" ]; then
 fi
 
 # Extract all view function names from a contract (get_*, is_*, list_*),
-# prefixed with the contract name to match collection request names.
+# prefixed as "<contract>_<function>" to match collection request names.
 extract_views() {
   local contract="$1"
   local contract_file="$REPO_ROOT/$contract/src/lib.rs"
@@ -54,7 +54,7 @@ extract_views() {
     sed 's/(.*$//' | \
     grep -E "^(get_|is_|list_)" | \
     sort -u | \
-    sed "s/^/$contract: /"
+    sed "s/^/${contract}_/"
 }
 
 # Collect expected view names across all contracts.
@@ -90,15 +90,18 @@ echo ""
 MISSING=$(comm -23 <(echo "$EXPECTED_VIEWS") <(echo "$COLLECTION_VIEWS"))
 
 if [ -n "$MISSING" ]; then
-  echo "❌ DRIFT DETECTED: The following view functions are missing from the collection:"
+  echo "❌ DRIFT DETECTED: The following view functions are missing from $COLLECTION_FILE:"
   for contract in "${CONTRACTS[@]}"; do
-    contract_missing=$(echo "$MISSING" | grep "^$contract: " || true)
+    contract_missing=$(echo "$MISSING" | grep "^${contract}_" || true)
     if [ -n "$contract_missing" ]; then
-      echo "  $contract:"
-      echo "$contract_missing" | sed "s/^$contract: /    - /"
+      echo "  $contract ($contract/src/lib.rs):"
+      echo "$contract_missing" | sed "s/^${contract}_/    - /"
     fi
   done
   echo ""
+  echo "Fix: add a request named <contract>_<function> for each entry above to"
+  echo "     $COLLECTION_FILE, or run: python3 scripts/generate-view-calls-collection.py"
+  echo "     Then re-run this script."
   exit 1
 else
   echo "✓ Collection is in sync with contract view functions"
