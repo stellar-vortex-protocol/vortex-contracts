@@ -359,3 +359,22 @@ export interface FeeSchedule {
   effective_fee_bps: i128; // After applying highest applicable discount tier
   tiers: FeeDiscountTier[];
 }
+
+/**
+ * Thrown by the VortexClient constructor when the contract spec cannot be
+ * resolved for the supplied contract ID (absent or malformed). Extends Error,
+ * so existing `catch (e instanceof Error)` handlers keep working.
+ */
+export class ContractSpecError extends Error {
+  readonly contractId: string;
+
+  constructor(contractId: string, reason?: string) {
+    super(
+      `Invalid or missing contract spec for contract "${contractId}"` +
+        (reason ? `: ${reason}` : '')
+    );
+    this.name = 'ContractSpecError';
+    this.contractId = contractId;
+    Object.setPrototypeOf(this, ContractSpecError.prototype);
+  }
+}

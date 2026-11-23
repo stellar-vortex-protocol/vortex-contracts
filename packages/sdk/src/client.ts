@@ -46,6 +46,7 @@ import {
   xdr,
 } from 'stellar-sdk';
 import * as types from './types';
+import { ContractSpecError } from './types';
 
 /**
  * Convert a 32-byte intent ID (hex string, with or without 0x prefix) to an ScVal BytesN<32>.
@@ -148,7 +149,14 @@ export class VortexClient {
     this.baseFee = options.baseFee || BASE_FEE;
     this.timeout = options.timeout || 30000;
     this.server = new SorobanRpc.Server(this.rpcUrl, { allowHttp: this.rpcUrl.startsWith('http://') });
-    this.contract = new Contract(this.contractId);
+    try {
+      this.contract = new Contract(this.contractId);
+    } catch (err) {
+      throw new ContractSpecError(
+        String(this.contractId),
+        err instanceof Error ? err.message : String(err)
+      );
+    }
   }
 
   /**

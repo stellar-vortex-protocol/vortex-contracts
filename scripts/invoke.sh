@@ -110,7 +110,7 @@ resolve_contract_id() {
 # ─── Print usage ────────────────────────────────────────────────────────────
 
 print_usage() {
-  cat << 'EOF'
+  cat >&2 << 'EOF'
 Vortex Contract CLI Helper
 
 Usage:
@@ -136,13 +136,13 @@ Configuration:
     VORTEX_NETWORK         Network (default: testnet)
     VORTEX_CONFIG          Config file path (default: .env.local)
 EOF
-  exit 1
+  exit 2
 }
 
 # ─── Per-contract usage helpers ─────────────────────────────────────────────
 
 usage_intent_settlement() {
-  cat << 'EOF'
+  cat >&2 << 'EOF'
 intent_settlement functions:
 
   submit_intent         --user <ADDR> --src_chain <STR> --src_token <STR>
@@ -162,11 +162,11 @@ intent_settlement functions:
   pause
   unpause
 EOF
-  exit 1
+  exit 2
 }
 
 usage_solver_registry() {
-  cat << 'EOF'
+  cat >&2 << 'EOF'
 solver_registry functions:
 
   stake                 --solver <ADDR> --amount <INT>
@@ -179,11 +179,11 @@ solver_registry functions:
   set_tier_threshold    --tier <INT> --min_bond <INT> --min_score_bps <INT>
   get_solver            --solver <ADDR>
 EOF
-  exit 1
+  exit 2
 }
 
 usage_proof_registry() {
-  cat << 'EOF'
+  cat >&2 << 'EOF'
 proof_registry functions:
 
   authorize_emitter     --chain_id <INT> --emitter <ADDR>
@@ -192,22 +192,22 @@ proof_registry functions:
   receive_proof_axelar  --intent_id <HEX> --src_chain_id <INT> --src_amount <INT>
   get_proof             --intent_id <HEX>
 EOF
-  exit 1
+  exit 2
 }
 
 usage_reputation_badge() {
-  cat << 'EOF'
+  cat >&2 << 'EOF'
 reputation_badge functions:
 
   mint                  --solver <ADDR>
   upgrade_badge         --solver <ADDR>
   get_badge             --solver <ADDR>
 EOF
-  exit 1
+  exit 2
 }
 
 usage_governor() {
-  cat << 'EOF'
+  cat >&2 << 'EOF'
 governor functions:
 
   initialize            --registry <ADDR> --timelock <ADDR> --voting_delay <INT>
@@ -221,11 +221,11 @@ governor functions:
   get_proposal          --proposal_id <INT>
   voting_power          --account <ADDR> --ledger <INT>
 EOF
-  exit 1
+  exit 2
 }
 
 usage_backstop_vault() {
-  cat << 'EOF'
+  cat >&2 << 'EOF'
 backstop_vault functions:
 
   initialize            --admin <ADDR> --bond_token <ADDR> --settlement <ADDR>
@@ -238,11 +238,11 @@ backstop_vault functions:
   get_vault_state
   get_lp_position       --lp <ADDR>
 EOF
-  exit 1
+  exit 2
 }
 
 usage_treasury_streams() {
-  cat << 'EOF'
+  cat >&2 << 'EOF'
 treasury_streams functions:
 
   initialize            --governor <ADDR>
@@ -253,11 +253,11 @@ treasury_streams functions:
   balance_of            --stream_id <INT>
   get_stream            --stream_id <INT>
 EOF
-  exit 1
+  exit 2
 }
 
 usage_intent_periphery() {
-  cat << 'EOF'
+  cat >&2 << 'EOF'
 intent_periphery functions:
 
   initialize            --admin <ADDR> --settlement <ADDR>
@@ -272,7 +272,7 @@ intent_periphery functions:
   get_intent            --intent_id <HEX>
   get_protocol_health
 EOF
-  exit 1
+  exit 2
 }
 
 # ─── Argument parsing helpers ────────────────────────────────────────────────
@@ -308,9 +308,9 @@ if [[ $# -lt 1 ]]; then
     treasury_streams)  usage_treasury_streams ;;
     intent_periphery)  usage_intent_periphery ;;
     *)
-      echo "Unknown contract: $CONTRACT"
-      echo "Run ./scripts/invoke.sh for the list of contracts."
-      exit 1
+      echo "Unknown contract: $CONTRACT" >&2
+      echo "Run ./scripts/invoke.sh for the list of contracts." >&2
+      exit 2
       ;;
   esac
 fi
@@ -343,7 +343,7 @@ case "$CONTRACT" in
             --src_amount)      append_value src_amount "$2";       shift 2 ;;
             --dst_token)       append_value dst_token "$2";        shift 2 ;;
             --min_dst_amount)  append_value min_dst_amount "$2";   shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       register_solver)
@@ -351,14 +351,14 @@ case "$CONTRACT" in
           case "$1" in
             --solver)       append_value solver "$2";       shift 2 ;;
             --bond_amount)  append_value bond_amount "$2";  shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       deregister_solver)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       withdraw_bond)
@@ -366,7 +366,7 @@ case "$CONTRACT" in
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
             --amount) append_value amount "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       accept_intent)
@@ -374,7 +374,7 @@ case "$CONTRACT" in
           case "$1" in
             --solver)     append_value solver "$2";     shift 2 ;;
             --intent_id)  append_value intent_id "$2";  shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       fill_intent)
@@ -383,14 +383,14 @@ case "$CONTRACT" in
             --solver)       append_value solver "$2";       shift 2 ;;
             --intent_id)    append_value intent_id "$2";    shift 2 ;;
             --fill_amount)  append_value fill_amount "$2";  shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       slash_solver | cancel_intent | expire_intent)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --intent_id) append_value intent_id "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       is_intent_fillable)
@@ -398,25 +398,25 @@ case "$CONTRACT" in
           case "$1" in
             --intent_id) append_value intent_id "$2"; shift 2 ;;
             --solver)    append_value solver "$2";    shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       get_intent)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --intent_id) append_value intent_id "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       get_solver)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       get_stats | pause | unpause) ;;   # no extra arguments
-      *) echo "Unknown intent_settlement function: $COMMAND"; usage_intent_settlement ;;
+      *) echo "Unknown intent_settlement function: $COMMAND" >&2; usage_intent_settlement ;;
     esac ;;
 
   # ── solver_registry ──────────────────────────────────────────────────────
@@ -427,14 +427,14 @@ case "$CONTRACT" in
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
             --amount) append_value amount "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       deregister_solver)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       record_fill)
@@ -442,14 +442,14 @@ case "$CONTRACT" in
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
             --amount) append_value amount "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       record_failure)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       slash)
@@ -457,7 +457,7 @@ case "$CONTRACT" in
           case "$1" in
             --solver)        append_value solver "$2";        shift 2 ;;
             --slash_amount)  append_value slash_amount "$2";  shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       lock_obligation | release_obligation)
@@ -465,7 +465,7 @@ case "$CONTRACT" in
           case "$1" in
             --solver)    append_value solver "$2";    shift 2 ;;
             --intent_id) append_value intent_id "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       set_tier_threshold)
@@ -474,17 +474,17 @@ case "$CONTRACT" in
             --tier)           append_value tier "$2";           shift 2 ;;
             --min_bond)       append_value min_bond "$2";       shift 2 ;;
             --min_score_bps)  append_value min_score_bps "$2";  shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       get_solver)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
-      *) echo "Unknown solver_registry function: $COMMAND"; usage_solver_registry ;;
+      *) echo "Unknown solver_registry function: $COMMAND" >&2; usage_solver_registry ;;
     esac ;;
 
   # ── proof_registry ───────────────────────────────────────────────────────
@@ -495,7 +495,7 @@ case "$CONTRACT" in
           case "$1" in
             --chain_id) append_value chain_id "$2"; shift 2 ;;
             --emitter)  append_value emitter "$2";  shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       authorize_axelar)
@@ -503,7 +503,7 @@ case "$CONTRACT" in
           case "$1" in
             --chain_name)     append_string chain_name "$2";     shift 2 ;;
             --source_address) append_string source_address "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       receive_proof | receive_proof_axelar)
@@ -512,17 +512,17 @@ case "$CONTRACT" in
             --intent_id)   append_value intent_id "$2";   shift 2 ;;
             --src_chain_id) append_value src_chain_id "$2"; shift 2 ;;
             --src_amount)  append_value src_amount "$2";  shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       get_proof)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --intent_id) append_value intent_id "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
-      *) echo "Unknown proof_registry function: $COMMAND"; usage_proof_registry ;;
+      *) echo "Unknown proof_registry function: $COMMAND" >&2; usage_proof_registry ;;
     esac ;;
 
   # ── reputation_badge ─────────────────────────────────────────────────────
@@ -532,10 +532,10 @@ case "$CONTRACT" in
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
-      *) echo "Unknown reputation_badge function: $COMMAND"; usage_reputation_badge ;;
+      *) echo "Unknown reputation_badge function: $COMMAND" >&2; usage_reputation_badge ;;
     esac ;;
 
   # ── governor ─────────────────────────────────────────────────────────────
@@ -550,7 +550,7 @@ case "$CONTRACT" in
             --voting_period)      append_value voting_period "$2";      shift 2 ;;
             --proposal_threshold) append_value proposal_threshold "$2"; shift 2 ;;
             --quorum)             append_value quorum "$2";             shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       propose)
@@ -560,7 +560,7 @@ case "$CONTRACT" in
             --target)    append_value target "$2";    shift 2 ;;
             --function)  append_value function "$2";  shift 2 ;;
             --calldata)  append_value calldata "$2";  shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       cast_vote)
@@ -569,14 +569,14 @@ case "$CONTRACT" in
             --voter)       append_value voter "$2";       shift 2 ;;
             --proposal_id) append_value proposal_id "$2"; shift 2 ;;
             --support)     append_value support "$2";     shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       queue | execute | state | get_proposal)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --proposal_id) append_value proposal_id "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       voting_power)
@@ -584,10 +584,10 @@ case "$CONTRACT" in
           case "$1" in
             --account) append_value account "$2"; shift 2 ;;
             --ledger)  append_value ledger "$2";  shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
-      *) echo "Unknown governor function: $COMMAND"; usage_governor ;;
+      *) echo "Unknown governor function: $COMMAND" >&2; usage_governor ;;
     esac ;;
 
   # ── backstop_vault ───────────────────────────────────────────────────────
@@ -599,7 +599,7 @@ case "$CONTRACT" in
             --admin)      append_value admin "$2";      shift 2 ;;
             --bond_token) append_value bond_token "$2"; shift 2 ;;
             --settlement) append_value settlement "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       deposit)
@@ -607,7 +607,7 @@ case "$CONTRACT" in
           case "$1" in
             --lp)     append_value lp "$2";     shift 2 ;;
             --amount) append_value amount "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       withdraw)
@@ -615,14 +615,14 @@ case "$CONTRACT" in
           case "$1" in
             --lp)     append_value lp "$2";     shift 2 ;;
             --shares) append_value shares "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       process_queued_withdrawal | get_lp_position)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --lp) append_value lp "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       cover)
@@ -631,25 +631,25 @@ case "$CONTRACT" in
             --intent_id) append_value intent_id "$2"; shift 2 ;;
             --amount)    append_value amount "$2";    shift 2 ;;
             --recipient) append_value recipient "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       receive_income)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --amount) append_value amount "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       set_emergency_mode)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --enabled) append_value enabled "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       get_vault_state) ;;   # no arguments
-      *) echo "Unknown backstop_vault function: $COMMAND"; usage_backstop_vault ;;
+      *) echo "Unknown backstop_vault function: $COMMAND" >&2; usage_backstop_vault ;;
     esac ;;
 
   # ── treasury_streams ─────────────────────────────────────────────────────
@@ -659,7 +659,7 @@ case "$CONTRACT" in
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --governor) append_value governor "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       create_stream)
@@ -672,17 +672,17 @@ case "$CONTRACT" in
             --start)     append_value start "$2";     shift 2 ;;
             --cliff)     append_value cliff "$2";     shift 2 ;;
             --end)       append_value end "$2";       shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       withdraw | cancel | balance_of | get_stream)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --stream_id) append_value stream_id "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
-      *) echo "Unknown treasury_streams function: $COMMAND"; usage_treasury_streams ;;
+      *) echo "Unknown treasury_streams function: $COMMAND" >&2; usage_treasury_streams ;;
     esac ;;
 
   # ── intent_periphery ─────────────────────────────────────────────────────
@@ -693,14 +693,14 @@ case "$CONTRACT" in
           case "$1" in
             --admin)      append_value admin "$2";      shift 2 ;;
             --settlement) append_value settlement "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       set_settlement)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --settlement) append_value settlement "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       list_solvers | list_open_intents)
@@ -708,7 +708,7 @@ case "$CONTRACT" in
           case "$1" in
             --start) append_value start "$2"; shift 2 ;;
             --limit) append_value limit "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       list_intents_by_user)
@@ -717,30 +717,30 @@ case "$CONTRACT" in
             --user)  append_value user "$2";  shift 2 ;;
             --start) append_value start "$2"; shift 2 ;;
             --limit) append_value limit "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       get_fee_schedule | get_solver)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --solver) append_value solver "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       get_intent)
         while [[ $# -gt 0 ]]; do
           case "$1" in
             --intent_id) append_value intent_id "$2"; shift 2 ;;
-            *) echo "Unknown option: $1"; exit 1 ;;
+            *) echo "Unknown option: $1" >&2; exit 2 ;;
           esac
         done ;;
       get_settlement | get_stats | get_protocol_health) ;;   # no arguments
-      *) echo "Unknown intent_periphery function: $COMMAND"; usage_intent_periphery ;;
+      *) echo "Unknown intent_periphery function: $COMMAND" >&2; usage_intent_periphery ;;
     esac ;;
 
   *)
-    echo "Unknown contract: $CONTRACT"
-    echo ""
+    echo "Unknown contract: $CONTRACT" >&2
+    echo "" >&2
     print_usage
     ;;
 esac

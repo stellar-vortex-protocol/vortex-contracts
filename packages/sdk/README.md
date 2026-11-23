@@ -63,6 +63,26 @@ await client.fillIntent(
 );
 ```
 
+### Error Handling
+
+The `VortexClient` constructor throws a typed `ContractSpecError` (which extends `Error`)
+when the contract spec is missing or malformed for the given contract ID. The message
+includes the contract ID, so configuration problems are distinguishable from network failures.
+
+```typescript
+import { VortexClient, ContractSpecError } from '@vortex-protocol/sdk';
+
+try {
+  const client = new VortexClient({ contractId, horizon });
+} catch (err) {
+  if (err instanceof ContractSpecError) {
+    console.error(`Bad contract configuration (${err.contractId}):`, err.message);
+  } else {
+    throw err;
+  }
+}
+```
+
 ## API Overview
 
 ### User Operations

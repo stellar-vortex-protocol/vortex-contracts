@@ -207,6 +207,18 @@ Response:
 curl -X POST http://localhost:3000/shutdown
 ```
 
+### Error Responses
+
+Every error response from the relay's HTTP server carries an explicit status code and a
+JSON body of the form `{ "message": "..." }`. Success responses are unchanged.
+
+| Status | Meaning | Example cause |
+|--------|---------|---------------|
+| 400 | Bad input | Malformed JSON request body |
+| 404 | Unknown route | `GET /unknown` |
+| 405 | Wrong method (response includes an `Allow` header) | `POST /health` |
+| 500 | Internal failure | Unhandled server error |
+
 ## Retry Logic
 
 Failed webhook deliveries are retried with exponential backoff:
