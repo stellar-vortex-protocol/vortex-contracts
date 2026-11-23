@@ -218,12 +218,14 @@ fn diff(baseline: &[SpecEntry], current: &[SpecEntry]) -> Vec<Change> {
     changes
 }
 
-fn load_allowlist(root: &Path) -> Allowlist {
+fn load_allowlist(root: &Path) -> Result<Allowlist, String> {
     let path = root.join("specs/allowlist.json");
     match fs::read_to_string(&path) {
-        Ok(raw) => serde_json::from_str(&raw)
-            .unwrap_or_else(|e| panic!("invalid {}: {e}", path.display())),
-        Err(_) => Allowlist::default(),
+        Ok(raw) => {
+            serde_json::from_str(&raw).map_err(|e| format!("invalid {}: {e}", path.display()))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Allowlist::default()),
+        Err(e) => Err(format!("failed to read {}: {e}", path.display())),
     }
 }
 
@@ -309,7 +311,7 @@ fn check_crate(root: &Path, crate_name: &str, baseline_path: &Path) -> Result<bo
     let bytes = fs::read(&wasm).map_err(|e| format!("failed to read {}: {e}", wasm.display()))?;
     let current = extract_entries(&bytes)?;
 
-    let allowlist = load_allowlist(root);
+    let allowlist = load_allowlist(root)?;
     let changes = diff(&baseline.entries, &current);
 
     let mut ok = true;
