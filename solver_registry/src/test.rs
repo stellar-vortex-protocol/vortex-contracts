@@ -14,7 +14,7 @@ use crate::{
 use core::sync::atomic::{AtomicU32, Ordering};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Address, BytesN, Env, Symbol,
+    token, Address, BytesN, Env, String, Symbol,
 };
 
 /// A fresh `intent_id` per call, so tests that don't exercise idempotency
@@ -959,4 +959,30 @@ fn perk_getters_match_table() {
         c.try_get_slash_bps(&5),
         Err(Ok(Error::InvalidTier.into()))
     );
+}
+
+#[test]
+fn register_with_empty_metadata_uri_is_rejected_and_writes_nothing() {
+    let ctx = setup();
+    ctx.mint(&ctx.solver, FLOOR);
+    let res = ctx.client().try_register_solver_with_metadata(
+        &ctx.solver,
+        &FLOOR,
+        &String::from_str(&ctx.env, ""),
+    );
+    assert_eq!(res, Err(Ok(Error::EmptyMetadataUri)));
+    assert_eq!(ctx.client().get_metadata_uri(&ctx.solver), None);
+    assert_eq!(ctx.bond().balance(&ctx.solver), FLOOR);
+    // Not registered: a normal registration still succeeds.
+    ctx.client().register_solver(&ctx.solver, &FLOOR);
+}
+
+#[test]
+fn register_with_non_empty_metadata_uri_succeeds() {
+    let ctx = setup();
+    ctx.mint(&ctx.solver, FLOOR);
+    let uri = String::from_str(&ctx.env, "ipfs://solver-metadata");
+    ctx.client()
+        .register_solver_with_metadata(&ctx.solver, &FLOOR, &uri);
+    assert_eq!(ctx.client().get_metadata_uri(&ctx.solver), Some(uri));
 }

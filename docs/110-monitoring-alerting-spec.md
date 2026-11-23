@@ -60,10 +60,8 @@ anti-pattern to avoid in future contracts; see
 
 | Signal | Source | Condition | Severity |
 |---|---|---|---|
-| Unusual slash rate | `solver_slashed` event count vs. `intent_accepted` count in the same rolling window | Slash rate over a trailing 1h window exceeds a baseline (suggested starting point: >20% of accepted intents slashed, or >5 slashes in 10 minutes, whichever trips first) | **P2** — may indicate a bug in fill validation, a coordinated solver failure, or an economic condition (bond too small relative to opportunity cost) making default attractive. |
-| Bond utilization dropping | `bond_withdrawn` + `solver_deregistered` event volume, reconciled against `get_solver(address).bond_amount` for tracked solvers | Aggregate bonded collateral across actively-monitored solvers drops materially (suggested: >25%) within a short window (e.g. 1h) | **P2** — solvers de-risking ahead of an anticipated problem is a leading indicator, not just a lagging one. |
-| Mass solver exit | `solver_deregistered` event count | More than N deregistrations (suggested N=3) within 1h | **P2** — correlate with recent `slash_solver` or `config_updated` events for a likely cause. |
-| Repeated slash-cooldown lockouts | `accept_intent` reverting with `Error::SolverInactive` while `last_slash_time` cooldown is active (visible via `get_solver`) | A given solver hitting this repeatedly | **P3** — informational; expected behavior, but a spike across many solvers simultaneously correlates with the "unusual slash rate" signal above. |
+| Unusual slash rate | `solver_slashed` event count in a rolling window | `solver_slashed` count within the trailing window reaches the threshold (monitor default: 5 slashes in 10 minutes; `SLASH_COUNT_THRESHOLD` / `SLASH_WINDOW_MINUTES`) | **P2** — may indicate a bug in fill validation, a coordinated solver failure, or an economic condition (bond too small relative to opportunity cost) making default attractive. |
+| Mass solver exit | `solver_deregistered` event count | Deregistrations within 1h reach N (monitor default N=3; `MASS_SOLVER_EXIT_THRESHOLD`) | **P2** — correlate with recent `slash_solver` or `config_updated` events for a likely cause. |
 
 There is currently no view that sums bonded collateral across *all*
 registered solvers in one call — computing the aggregate requires
@@ -77,10 +75,7 @@ instead of requiring off-chain enumeration.
 
 | Signal | Source | Condition | Severity |
 |---|---|---|---|
-| Fill-rate stagnation | `get_stats().1` (`total_volume`) polled periodically, or absence of `intent_filled` events | No increase over an expected window (baseline depends on observed traffic) | **P3** — informational unless sustained; may indicate solvers are offline or the destination-token allowlist is misconfigured. |
-| Expiry-rate spike | `intent_expired` event count | Sustained increase relative to `intent_submitted` volume in the same window | **P2** — indicates either solvers are not accepting intents (see 3.2) or `submit_intent` deadlines are being set too tight upstream. |
-| Extension-granting frequency | `extension_granted` event, repeated for the same `intent_id` | Same intent granted more than one extension | **P3** — a solver repeatedly requesting extensions on the same intent is a stalling/griefing pattern worth a manual look. |
-| Config/allowlist churn | `dst_token_allowed`/`disallowed`, `src_chain_allowed`/`disallowed`, `bond_multiplier_set`, `config_updated` | Any occurrence outside a pre-announced change window | **P3**, escalate to **P2** if unexpected — these directly change what `submit_intent` will accept. |
+| Config/allowlist churn | `dst_token_allowed`/`disallowed`, `src_chain_allowed`/`disallowed`, `bond_multiplier_set`, `config_updated` | Any occurrence outside a pre-announced maintenance window | **P2** — these directly change what `submit_intent` will accept. |
 
 ### 3.4 Admin / key-compromise signals
 
@@ -103,6 +98,13 @@ signals in §3.
 ---
 
 ## 5. Open Follow-Ups
+
+- Signals that were specified earlier but are **not** evaluated by
+  `monitoring/vortex-monitor.js` and so are not alerts today: aggregate
+  bond-utilization drop, repeated slash-cooldown lockouts, fill-rate
+  stagnation, expiry-rate spike (the monitor only logs the count), and
+  repeated extension grants on one intent. Each needs a monitor check
+  before being reintroduced to §3.
 
 - Aggregate bonded-collateral view (§3.2) — separate issue if needed.
 - Consider emitting a distinguishable topic for pause vs. unpause instead

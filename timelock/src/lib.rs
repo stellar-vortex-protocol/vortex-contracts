@@ -58,6 +58,8 @@ pub enum TimelockError {
     NotExpired = 11,
     /// The operation has no predecessor but one was supplied, or vice versa.
     InvalidPredecessorState = 12,
+    /// A call targets the all-zero (null) contract or account address.
+    ZeroTargetAddress = 13,
 }
 
 /// A single call inside a batch.
@@ -224,6 +226,21 @@ impl TimelockController {
         delay: u64,
     ) -> BytesN<32> {
         Self::require_role(&env, &PROPOSER);
+
+        // Reject null targets before any state is read or written.
+        let zero_contract = Address::from_str(
+            &env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        );
+        let zero_account = Address::from_str(
+            &env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        );
+        for call in calls.iter() {
+            if call.target == zero_contract || call.target == zero_account {
+                env.panic_with_error(TimelockError::ZeroTargetAddress);
+            }
+        }
 
         let min_delay = Self::get_min_delay(env.clone());
         if delay < min_delay {
