@@ -14,53 +14,60 @@ npm install @vortex-protocol/sdk stellar-sdk
 
 ```typescript
 import { VortexClient } from '@vortex-protocol/sdk';
-import { Server, Keypair } from 'stellar-sdk';
+import { Server, Keypair, Networks } from 'stellar-sdk';
 
-// Initialize client
-const horizon = new Server('https://horizon-testnet.stellar.org');
-const client = new VortexClient({
-  contractId: 'CAKJ2RNHMBT74VJLGVLZ6SCOBRQMDQ6PU5CCYKP4IJMVKFAACJKBRMM',
-  horizon,
-  rpcUrl: 'https://soroban-testnet.stellar.org',
-});
+async function main() {
+  const client = new VortexClient({
+    contractId: 'CAKJ2RNHMBT74VJLGVLZ6SCOBRQMDQ6PU5CCYKP4IJMVKFAACJKBRMM',
+    horizon: new Server('https://horizon-testnet.stellar.org'),
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: Networks.TESTNET_NETWORK_PASSPHRASE,
+  });
 
-// Check if solver is eligible
-const isEligible = await client.isSolverEligible(solverAddress);
+  // Load keypairs from environment
+  const userKeypair = Keypair.fromSecret(process.env.USER_SECRET_KEY!);
+  const solverKeypair = Keypair.fromSecret(process.env.SOLVER_SECRET_KEY!);
 
-// List open intents
-const openIntents = await client.listOpenIntents({ limit: 10 });
+  // Check if solver is eligible
+  const isEligible = await client.isSolverEligible(solverKeypair.publicKey());
 
-// Submit an intent
-await client.submitIntent(
-  {
-    user: userAddress,
-    src_chain: 'ethereum',
-    src_token: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', // WETH
-    src_amount: 1_000_000_000_000_000_000n, // 1 ETH
-    dst_token: usdc_sac_address,
-    min_dst_amount: 3_500_000_000n, // 3500 USDC
-  },
-  signingKeypair
-);
+  // List open intents
+  const openIntents = await client.listOpenIntents({ limit: 5 });
 
-// Accept an intent
-await client.acceptIntent(
-  {
-    solver: solverAddress,
-    intent_id: intentId,
-  },
-  solverKeypair
-);
+  // Submit an intent (user)
+  const intentId = await client.submitIntent(
+    {
+      user: userKeypair.publicKey(),
+      src_chain: 'ethereum',
+      src_token: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', // WETH
+      src_amount: 1_000_000_000_000_000_000n, // 1 ETH in wei
+      dst_token: 'CUSDC...', // USDC on Stellar (placeholder)
+      min_dst_amount: 3_500_000_000n, // 3500 USDC minimum
+    },
+    userKeypair
+  );
 
-// Fill an intent
-await client.fillIntent(
-  {
-    solver: solverAddress,
-    intent_id: intentId,
-    fill_amount: 3_500_000_000n,
-  },
-  solverKeypair
-);
+  // Accept the intent (solver)
+  await client.acceptIntent(
+    {
+      solver: solverKeypair.publicKey(),
+      intent_id: intentId,
+    },
+    solverKeypair
+  );
+
+  // Fill the intent (solver)
+  await client.fillIntent(
+    {
+      solver: solverKeypair.publicKey(),
+      intent_id: intentId,
+      fill_amount: 3_500_000_000n, // Deliver minimum amount
+    },
+    solverKeypair
+  );
+}
+
+main().catch(console.error);
 ```
 
 ## API Overview
