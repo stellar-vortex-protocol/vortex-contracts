@@ -60,6 +60,8 @@ try {
 - **`DisputeResolution`** — Enum for dispute outcomes (Issue #188)
 - **`ErrorCode`** — Complete error code enumeration
 - **`ErrorMessages`** — Map of error codes to human-readable messages
+- **Per-contract error enums** — `CommonError`, `SolverRegistryError`, `ProofRegistryError`, `ReputationBadgeError`, `ArbiterPanelError`, `DirectoryError`, `TimelockError` (alongside the existing governor, treasury_streams, fee_router, backstop_vault and intent_periphery enums)
+- **Event payload interfaces** — `IntentSubmittedEvent`, `IntentAcceptedEvent`, `IntentFilledEvent`, `ExtensionGrantedEvent`, `SolverSlashedEvent`, `BondWithdrawnEvent`, `TokensRescuedEvent`, `BondMultiplierSetEvent`, `ConfigUpdatedEvent`, `BackstopDepositEvent`, `BackstopWithdrawEvent`, `BackstopCoverEvent`, `StreamCreatedEvent`, `StreamWithdrawEvent`, `StreamCancelledEvent`, `PeripheryInitializedEvent` (decoded event data; see `docs/event-schema.md`)
 
 #### Governor (`governor`)
 

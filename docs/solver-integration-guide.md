@@ -58,8 +58,23 @@ Key constants baked into the contract:
 
 ## Registering as a Solver
 
-Before your bot can accept intents, it must be registered with a bond ≥ 50 USDC.
+Before your bot can accept intents, it must be registered with a bond of at
+least the configured `min_bond` (default 50 USDC; read it with `get_config`).
 The bond is held as collateral: 10% is slashed for every fill window you miss.
+
+> **Which contract?** The registration in this guide is on the
+> `intent_settlement` contract, which is the contract `accept_intent`
+> checks today. The separate `solver_registry` crate
+> ([solver-registry-interface.md](solver-registry-interface.md)) has its own
+> `register_solver(solver, bond_amount)` / `stake` / `unstake` flow with
+> tier floors and a one-time registration, but `intent_settlement` does not
+> yet read it, so registering there does **not** make you eligible to accept
+> intents. Do not mix the two: the entrypoints share names but have
+> different behaviour and different events.
+
+Entrypoint: `register_solver(solver: Address, bond_amount: i128)`, in that
+argument order. The solver must authorise the call. It pulls `bond_amount`
+of the default bond token from `solver` into the contract.
 
 ```bash
 stellar contract invoke \
@@ -71,10 +86,37 @@ stellar contract invoke \
   --bond_amount 500000000   # 50 USDC in stroops (7 decimal places)
 ```
 
-You can top up an existing bond at any time by calling `register_solver` again
-with a positive `bond_amount`. The contract checks that the *cumulative* total
-meets `MIN_BOND`, so top-ups smaller than 50 USDC are accepted once you are
-already above the threshold.
+To bond in a non-default token that is on the admin's bond-token allowlist,
+call `register_solver_with_token(solver, bond_token, bond_amount)` instead
+(same argument order with `bond_token` inserted second). A solver may hold
+bonds in a limited number of distinct tokens.
+
+Behaviour on success:
+
+- A new `SolverRecord` is stored with `is_active = true`; the solver count and
+  total bonded amount increase.
+- `solver_registered` is emitted with topics `("solver_registered", solver)`
+  and data `(bond_token: Address, bond_amount: i128)`. `bond_amount` is the
+  amount of this call, not the cumulative bond.
+
+Calls are rejected (the transaction fails with the named error) when:
+
+| Error                | When                                                                          |
+|----------------------|-------------------------------------------------------------------------------|
+| `ContractPaused`     | The protocol is paused.                                                       |
+| `ZeroAmount`         | `bond_amount <= 0`.                                                           |
+| `BondTokenNotAllowed`| The token is neither the default bond token nor on the allowlist.             |
+| `SolverBondTooLow`   | Your resulting total bond in that token would be below its minimum.           |
+| `TooManyBondTokens`  | You already hold the maximum number of distinct bond tokens.                  |
+
+There is no dedicated rejection event: failures surface as the contract
+error above, and nothing is emitted.
+
+You can top up an existing bond at any time by calling `register_solver`
+again with a positive `bond_amount`; it adds to the existing bond, sets
+`is_active = true` again, and emits `solver_registered` again. The minimum is
+enforced on the resulting *cumulative* total, so a top-up smaller than the
+minimum is accepted once you are already above it.
 
 ### Declaring served routes (optional)
 
@@ -181,7 +223,7 @@ symbols listed below.
 | `intent_cancelled`  | `cancel_intent`    | user address           | `intent_id: BytesN<32>`                                        |
 | `intent_expired`    | `expire_intent`    | *(no second topic)*    | `intent_id: BytesN<32>`                                        |
 | `solver_slashed`    | `slash_solver`     | solver address         | `(intent_id: BytesN<32>, slash_amount: i128)`                  |
-| `solver_registered` | `register_solver`  | solver address         | `bond_amount: i128`                                            |
+| `solver_registered` | `register_solver`, `register_solver_with_token` | solver address | `(bond_token: Address, bond_amount: i128)`                     |
 
 ### Polling via Stellar RPC
 
