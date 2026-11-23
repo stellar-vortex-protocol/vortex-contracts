@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "node init && tsc",
+    "build": "tsc",
     "clean": "rm -rf dist",
     "test": "jest",
     "lint": "eslint src/**/*.ts"
