@@ -108,6 +108,8 @@ Each event is sent as a POST request to your webhook:
 }
 ```
 
+Each event payload is validated once when it is received, not again on each delivery attempt. Events that fail validation are logged and skipped. The webhook body is unchanged.
+
 ### Headers
 
 - `Content-Type: application/json`

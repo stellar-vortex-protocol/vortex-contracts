@@ -174,7 +174,12 @@ export class EventRelay {
         this.logger.info({ count: events.length }, "Fetched events");
 
         for (const event of events) {
-          await this.relayEvent(event);
+          // Validate once per event; relayEvent retries reuse the validated payload.
+          if (this.isValidEvent(event)) {
+            await this.relayEvent(event);
+          } else {
+            this.logger.warn({ eventId: event?.id }, "Invalid event; skipping");
+          }
           this.currentCursor = event.id;
         }
       }
@@ -220,6 +225,18 @@ export class EventRelay {
       );
       return [];
     }
+  }
+
+  /**
+   * Check the event payload has the required fields (payload is immutable once received)
+   */
+  private isValidEvent(event: EventPayload): boolean {
+    return (
+      !!event &&
+      typeof event.id === "string" &&
+      typeof event.contractId === "string" &&
+      typeof event.type === "string"
+    );
   }
 
   /**
