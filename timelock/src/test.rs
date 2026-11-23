@@ -595,3 +595,68 @@ fn full_admin_transfer_flow() {
 
     assert!(h.client.has_role(&EXECUTOR_ROLE, &new_executor));
 }
+
+// ---------------------------------------------------------------------------
+// Rejection events (#704). Each rejection path goes through `reject`, which
+// publishes `(<entrypoint>_rejected, id)` with the `TimelockError` code before
+// aborting. Soroban rolls back contract events of a failed call, so the tests
+// assert the typed error returned by that same path.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn schedule_rejects_insufficient_delay() {
+    let h = setup();
+    let args = (1u32,).into_val(&h.env);
+    let res = h.client.try_schedule(
+        &h.target,
+        &Symbol::new(&h.env, "set_value"),
+        &args,
+        &BytesN::from_array(&h.env, &[0u8; 32]),
+        &BytesN::from_array(&h.env, &[1u8; 32]),
+        &(MIN_DELAY - 1),
+    );
+    assert_eq!(res.err(), Some(Ok(TimelockError::InsufficientDelay)));
+}
+
+#[test]
+fn schedule_rejects_duplicate_operation() {
+    let h = setup();
+    let zero = BytesN::from_array(&h.env, &[0u8; 32]);
+    let salt = BytesN::from_array(&h.env, &[2u8; 32]);
+    let args: Vec<Val> = (1u32,).into_val(&h.env);
+    let f = Symbol::new(&h.env, "set_value");
+    h.client.schedule(&h.target, &f, &args, &zero, &salt, &MIN_DELAY);
+    let res = h.client.try_schedule(&h.target, &f, &args, &zero, &salt, &MIN_DELAY);
+    assert_eq!(res.err(), Some(Ok(TimelockError::AlreadyScheduled)));
+}
+
+#[test]
+fn execute_rejects_unknown_not_ready_and_done() {
+    let h = setup();
+    let unknown = BytesN::from_array(&h.env, &[9u8; 32]);
+    assert_eq!(
+        h.client.try_execute(&unknown).err(),
+        Some(Ok(TimelockError::UnknownOperation))
+    );
+
+    let args: Vec<Val> = (1u32,).into_val(&h.env);
+    let id = h.client.schedule(
+        &h.target,
+        &Symbol::new(&h.env, "set_value"),
+        &args,
+        &BytesN::from_array(&h.env, &[0u8; 32]),
+        &BytesN::from_array(&h.env, &[3u8; 32]),
+        &MIN_DELAY,
+    );
+    assert_eq!(
+        h.client.try_execute(&id).err(),
+        Some(Ok(TimelockError::NotReady))
+    );
+
+    h.env.ledger().with_mut(|l| l.timestamp += MIN_DELAY);
+    h.client.execute(&id);
+    assert_eq!(
+        h.client.try_execute(&id).err(),
+        Some(Ok(TimelockError::AlreadyDone))
+    );
+}

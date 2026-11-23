@@ -214,6 +214,15 @@ impl FeeRouter {
     /// first position as a meaningful allocation and not reorder sinks
     /// casually. The full balance is always conserved.
     pub fn distribute(env: Env, token: Address) -> Result<(), FeeRouterError> {
+        // Defensive cap check (#677): `distribute` takes no caller-supplied
+        // list; it iterates the stored sink set, which `validate_sinks` already
+        // bounds by `MAX_SINKS`. Re-check before iterating so an over-cap set
+        // fails with a named error instead of partway through.
+        let sinks: Vec<Sink> = env.storage().instance().get(&DataKey::Sinks).unwrap();
+        if sinks.len() > MAX_SINKS {
+            return Err(FeeRouterError::TooManySinks);
+        }
+
         let total: i128 = env
             .storage()
             .persistent()
@@ -223,7 +232,6 @@ impl FeeRouter {
             return Err(FeeRouterError::UnknownToken);
         }
 
-        let sinks: Vec<Sink> = env.storage().instance().get(&DataKey::Sinks).unwrap();
         let mut distributed: i128 = 0;
         let len = sinks.len();
         for i in 0..len {
@@ -414,6 +422,21 @@ mod tests {
         assert_eq!(t, 500);
         assert_eq!(b, 300);
         assert_eq!(r, 200);
+    }
+
+    #[test]
+    fn sink_set_above_cap_is_rejected_with_named_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, FeeRouter);
+        let client = FeeRouterClient::new(&env, &contract_id);
+        let governance = Address::generate(&env);
+        let mut sinks = Vec::new(&env);
+        for _ in 0..(MAX_SINKS + 1) {
+            sinks.push_back(Sink { account: Address::generate(&env), weight_bps: 1 });
+        }
+        let res = client.try_initialize(&governance, &100u64, &sinks);
+        assert_eq!(res, Err(Ok(FeeRouterError::TooManySinks)));
     }
 
     #[test]

@@ -225,15 +225,15 @@ impl TimelockController {
     ) -> BytesN<32> {
         Self::require_role(&env, &PROPOSER);
 
-        let min_delay = Self::get_min_delay(env.clone());
-        if delay < min_delay {
-            env.panic_with_error(TimelockError::InsufficientDelay);
-        }
-
         let id = Self::hash_operation(env.clone(), calls.clone(), predecessor.clone(), salt.clone());
 
+        let min_delay = Self::get_min_delay(env.clone());
+        if delay < min_delay {
+            Self::reject(&env, "schedule_rejected", &id, TimelockError::InsufficientDelay);
+        }
+
         if env.storage().persistent().has(&(OP_KEY, id.clone())) {
-            env.panic_with_error(TimelockError::AlreadyScheduled);
+            Self::reject(&env, "schedule_rejected", &id, TimelockError::AlreadyScheduled);
         }
 
         // A predecessor, when supplied, must itself be a known operation.
@@ -243,7 +243,7 @@ impl TimelockController {
                 .persistent()
                 .has(&(OP_KEY, predecessor.clone()))
         {
-            env.panic_with_error(TimelockError::InvalidPredecessor);
+            Self::reject(&env, "schedule_rejected", &id, TimelockError::InvalidPredecessor);
         }
 
         let now = env.ledger().timestamp();
@@ -303,18 +303,18 @@ impl TimelockController {
             .storage()
             .persistent()
             .get(&(OP_KEY, id.clone()))
-            .unwrap_or_else(|| env.panic_with_error(TimelockError::UnknownOperation));
+            .unwrap_or_else(|| Self::reject(&env, "execute_rejected", &id, TimelockError::UnknownOperation));
 
         if operation.executed {
-            env.panic_with_error(TimelockError::AlreadyDone);
+            Self::reject(&env, "execute_rejected", &id, TimelockError::AlreadyDone);
         }
 
         let now = env.ledger().timestamp();
         if now < operation.ready_at {
-            env.panic_with_error(TimelockError::NotReady);
+            Self::reject(&env, "execute_rejected", &id, TimelockError::NotReady);
         }
         if now > operation.expires_at {
-            env.panic_with_error(TimelockError::Expired);
+            Self::reject(&env, "execute_rejected", &id, TimelockError::Expired);
         }
 
         // Verify the stored operation still matches its committed hash.
@@ -325,7 +325,7 @@ impl TimelockController {
             operation.salt.clone(),
         );
         if recomputed != id {
-            env.panic_with_error(TimelockError::UnknownOperation);
+            Self::reject(&env, "execute_rejected", &id, TimelockError::UnknownOperation);
         }
 
         // Predecessor must be executed before this operation can run.
@@ -334,9 +334,9 @@ impl TimelockController {
                 .storage()
                 .persistent()
                 .get(&(OP_KEY, operation.predecessor.clone()))
-                .unwrap_or_else(|| env.panic_with_error(TimelockError::InvalidPredecessor));
+                .unwrap_or_else(|| Self::reject(&env, "execute_rejected", &id, TimelockError::InvalidPredecessor));
             if !pred.executed {
-                env.panic_with_error(TimelockError::UnmetPredecessor);
+                Self::reject(&env, "execute_rejected", &id, TimelockError::UnmetPredecessor);
             }
         }
 
@@ -423,6 +423,18 @@ impl TimelockController {
         preimage.append(&Bytes::from_slice(env, &salt.to_array()));
 
         env.crypto().sha256(&preimage).into()
+    }
+
+    /// Emit a rejection event for `id` and abort with `err`.
+    ///
+    /// Topic is `(<entrypoint>_rejected, id)`; data is the numeric
+    /// `TimelockError` code. Soroban discards contract events of a failed
+    /// invocation, so this surfaces in diagnostic events of the failed
+    /// transaction rather than in the ledger event stream.
+    fn reject(env: &Env, topic: &str, id: &BytesN<32>, err: TimelockError) -> ! {
+        env.events()
+            .publish((Symbol::new(env, topic), id.clone()), err as u32);
+        env.panic_with_error(err)
     }
 
     fn zero_hash(env: &Env) -> BytesN<32> {

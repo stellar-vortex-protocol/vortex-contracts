@@ -418,6 +418,30 @@ data   : (intent_id: BytesN<32>, fill_amount: i128, fee: i128)
 
 ---
 
+#### `fill_rejected`
+
+Emitted by `fill_intent` / `batch_fill_intent` immediately before a fill is
+rejected by the fill-window, state, solver-ownership, zero-amount or
+amount-too-large checks. The success event `intent_filled` is unchanged.
+Soroban discards contract events of a failed invocation, so this event is
+visible in the diagnostic events of the failed transaction rather than the
+committed ledger event stream. Rejections from the pause check or an unknown
+intent (which occur before the intent is loaded) do not emit it.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **topics[0]** | `Symbol` | `"fill_rejected"` |
+| **topics[1]** | `Address` | `solver` — the solver whose fill was rejected |
+| **data[0]** | `BytesN<32>` | `intent_id` |
+| **data[1]** | `u32` | `Error` code of the rejection |
+
+```
+topics : ("fill_rejected", <solver: Address>)
+data   : (intent_id: BytesN<32>, error_code: u32)
+```
+
+---
+
 #### `intent_cancelled`
 
 Emitted by `cancel_intent` when the intent owner cancels an Open intent.
@@ -893,3 +917,37 @@ exclusively through return values and the caller's own event layer.
 
 If `fee_router` is later promoted to a standalone Soroban contract, this
 section will be updated with its event schema.
+
+---
+
+# Event Schema — `timelock` rejection events
+
+> Added in issue #704. Source of truth: `timelock/src/lib.rs` (`reject`).
+
+Success events (`scheduled`, `cancelled`, `executed`) are unchanged. Each
+rejection in `schedule_batch` (and therefore `schedule`) and `execute` first
+publishes one of the events below, then aborts with the same `TimelockError`.
+Role failures (`Unauthorized`) are not covered: they occur before an operation
+ID is known.
+
+> **Note:** Soroban discards contract events of a failed invocation, so these
+> events appear in the diagnostic events of the failed transaction, not in the
+> committed ledger event stream.
+
+#### `schedule_rejected` / `execute_rejected`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **topics[0]** | `Symbol` | `"schedule_rejected"` or `"execute_rejected"` |
+| **topics[1]** | `BytesN<32>` | `id` — the operation ID |
+| **data** | `u32` | `TimelockError` code (the rejection reason) |
+
+```
+topics : ("schedule_rejected" | "execute_rejected", <id: BytesN<32>>)
+data   : <error_code: u32>
+```
+
+| Entrypoint | Reasons (`TimelockError`) |
+|------------|---------------------------|
+| `schedule` / `schedule_batch` | `InsufficientDelay` (2), `AlreadyScheduled` (3), `InvalidPredecessor` (9) |
+| `execute` | `UnknownOperation` (7), `AlreadyDone` (6), `NotReady` (5), `Expired` (10), `UnmetPredecessor` (8), `InvalidPredecessor` (9) |

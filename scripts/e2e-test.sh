@@ -35,6 +35,29 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Run a named step: print its name first; on failure print the step name and
+# captured output, then exit non-zero. Runs in the current shell so steps can
+# still set globals. On success the captured output is passed through to stdout.
+run_step() {
+    local name=$1
+    shift
+    local out
+    out=$(mktemp)
+
+    echo -e "${GREEN}[STEP]${NC} $name" >&2
+
+    if "$@" > "$out" 2>&1; then
+        cat "$out"
+        rm -f "$out"
+    else
+        local rc=$?
+        log_error "Step failed: $name (exit code $rc)" >&2
+        cat "$out" >&2
+        rm -f "$out"
+        exit "$rc"
+    fi
+}
+
 # Cleanup function
 cleanup() {
     log_info "Cleaning up..."
@@ -390,24 +413,24 @@ get_stats() {
 main() {
     log_info "Starting end-to-end integration test"
 
-    check_prerequisites
-    start_network
-    generate_accounts
+    run_step "check prerequisites" check_prerequisites
+    run_step "start network" start_network
+    run_step "generate accounts" generate_accounts
 
-    CONTRACT_ID=$(deploy_contract)
+    CONTRACT_ID=$(run_step "deploy contract" deploy_contract | tail -n 1)
 
-    initialize_contract "$CONTRACT_ID" "$ADMIN_KEY" "$ADMIN_ADDR" "$FEE_RECIPIENT_ADDR"
-    add_dst_token "$CONTRACT_ID" "$ADMIN_KEY"
-    enable_dst_allowlist "$CONTRACT_ID" "$ADMIN_KEY"
+    run_step "initialize contract" initialize_contract "$CONTRACT_ID" "$ADMIN_KEY" "$ADMIN_ADDR" "$FEE_RECIPIENT_ADDR"
+    run_step "add allowed destination token" add_dst_token "$CONTRACT_ID" "$ADMIN_KEY"
+    run_step "enable destination allowlist" enable_dst_allowlist "$CONTRACT_ID" "$ADMIN_KEY"
 
-    register_solver "$CONTRACT_ID" "$SOLVER_KEY" "$SOLVER_ADDR"
+    run_step "register solver" register_solver "$CONTRACT_ID" "$SOLVER_KEY" "$SOLVER_ADDR"
 
-    INTENT_ID=$(submit_intent "$CONTRACT_ID" "$USER_KEY" "$USER_ADDR")
+    INTENT_ID=$(run_step "submit intent" submit_intent "$CONTRACT_ID" "$USER_KEY" "$USER_ADDR" | tail -n 1)
 
-    accept_intent "$CONTRACT_ID" "$SOLVER_KEY" "$SOLVER_ADDR" "$INTENT_ID"
-    fill_intent "$CONTRACT_ID" "$SOLVER_KEY" "$SOLVER_ADDR" "$INTENT_ID" 100000000
+    run_step "accept intent" accept_intent "$CONTRACT_ID" "$SOLVER_KEY" "$SOLVER_ADDR" "$INTENT_ID"
+    run_step "fill intent" fill_intent "$CONTRACT_ID" "$SOLVER_KEY" "$SOLVER_ADDR" "$INTENT_ID" 100000000
 
-    get_stats "$CONTRACT_ID"
+    run_step "get stats" get_stats "$CONTRACT_ID"
 
     log_info "✓ End-to-end test completed successfully!"
 }
