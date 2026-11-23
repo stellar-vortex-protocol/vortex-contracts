@@ -137,6 +137,8 @@ pub enum FeeRouterError {
     TransferFailed = 10,
     /// Account string exceeds [`Sink::MAX_ACCOUNT_LEN`] characters.
     InvalidAccountLength = 11,
+    /// No sinks configured; distributing would silently drop the balance.
+    EmptyRecipients = 12,
 }
 
 /// The fee router contract.
@@ -214,6 +216,10 @@ impl FeeRouter {
     /// first position as a meaningful allocation and not reorder sinks
     /// casually. The full balance is always conserved.
     pub fn distribute(env: Env, token: Address) -> Result<(), FeeRouterError> {
+        let sinks: Vec<Sink> = env.storage().instance().get(&DataKey::Sinks).unwrap();
+        if sinks.is_empty() {
+            return Err(FeeRouterError::EmptyRecipients);
+        }
         let total: i128 = env
             .storage()
             .persistent()
@@ -223,7 +229,6 @@ impl FeeRouter {
             return Err(FeeRouterError::UnknownToken);
         }
 
-        let sinks: Vec<Sink> = env.storage().instance().get(&DataKey::Sinks).unwrap();
         let mut distributed: i128 = 0;
         let len = sinks.len();
         for i in 0..len {
