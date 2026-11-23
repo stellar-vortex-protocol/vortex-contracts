@@ -23,8 +23,9 @@ fn set_get_list_remove() {
     assert_eq!(c.get_address(&symbol_short!("settle")), a);
     assert_eq!(c.list_names().len(), 2);
     // update does not duplicate the name
-    c.set_address(&symbol_short!("settle"), &b);
-    assert_eq!(c.get_address(&symbol_short!("settle")), b);
+    let d = Address::generate(&env);
+    c.set_address(&symbol_short!("settle"), &d);
+    assert_eq!(c.get_address(&symbol_short!("settle")), d);
     assert_eq!(c.list_names().len(), 2);
     c.remove_address(&symbol_short!("settle"));
     assert_eq!(c.find_address(&symbol_short!("settle")), None);
@@ -67,4 +68,19 @@ fn two_step_admin_rotation() {
     c.accept_admin();
     assert_eq!(c.admin(), new_admin);
     assert!(c.try_accept_admin().is_err());
+}
+
+#[test]
+fn duplicate_address_under_different_name_rejected() {
+    let (env, c, _) = setup();
+    let a = Address::generate(&env);
+    c.set_address(&symbol_short!("settle"), &a);
+    let res = c.try_set_address(&symbol_short!("proof"), &a);
+    assert_eq!(res, Err(Ok(Error::AddressAlreadyRegistered)));
+    // First record untouched; second name never registered.
+    assert_eq!(c.get_address(&symbol_short!("settle")), a);
+    assert_eq!(c.find_address(&symbol_short!("proof")), None);
+    assert_eq!(c.list_names().len(), 1);
+    // Re-setting the same name to the same address is still allowed.
+    c.set_address(&symbol_short!("settle"), &a);
 }

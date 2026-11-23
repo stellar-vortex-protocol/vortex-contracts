@@ -553,3 +553,48 @@ fn test_cast_vote_after_deadline_exclusive() {
     let result = Governor::cast_vote(env, voter, id, VoteType::For);
     assert_eq!(result, Err(GovernorError::VotingClosed));
 }
+
+#[test]
+fn test_quorum_met_by_abstain_votes() {
+    // quorum = 50. for = 10, against = 0, abstain = 100: for + against alone
+    // (10) misses quorum, but total votes cast (110, including abstain) meets
+    // it, and for > against, so the proposal succeeds.
+    let (env, config) = setup_boundary();
+    let proposer = Address::generate(&env);
+
+    let give_power = |account: &Address, power: i128| {
+        let key = (
+            Symbol::new(&env, "checkpoint"),
+            config.registry.clone(),
+            account.clone(),
+        );
+        let checkpoints = Vec::from_array(&env, &[Checkpoint { ledger: 5, power }]);
+        env.storage().persistent().set(&key, &checkpoints);
+    };
+    give_power(&proposer, 200);
+
+    let id = Governor::propose(
+        env.clone(),
+        proposer,
+        Address::generate(&env),
+        Symbol::new(&env, "set_fee"),
+        BytesN::<32>::from_array(&env, &[0; 32]),
+    )
+    .unwrap();
+
+    let for_voter = Address::generate(&env);
+    let abstain_voter = Address::generate(&env);
+    give_power(&for_voter, 10);
+    give_power(&abstain_voter, 100);
+
+    // Voting window is [15, 115].
+    env.ledger().set_sequence(20);
+    Governor::cast_vote(env.clone(), for_voter, id, VoteType::For).unwrap();
+    Governor::cast_vote(env.clone(), abstain_voter, id, VoteType::Abstain).unwrap();
+
+    env.ledger().set_sequence(116);
+    assert_eq!(
+        Governor::state(env.clone(), id).unwrap(),
+        ProposalState::Succeeded
+    );
+}

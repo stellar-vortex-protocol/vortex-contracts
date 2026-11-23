@@ -2,6 +2,22 @@ and [`vortex-frontend`](https://github.com/vortex-protocol/vortex-frontend).
 
 ---
 
+## Quick start
+
+This repository is a multi-crate Cargo workspace (see `[workspace] members` in
+[`Cargo.toml`](./Cargo.toml)). From the repository root:
+
+```bash
+cargo build --workspace
+cargo test --workspace
+```
+
+To work on a single crate, use `cargo test -p <crate>`; see
+[`CONTRIBUTING.md`](./CONTRIBUTING.md) for per-crate runs, the Dev Container
+setup, and `make all` / `just all`.
+
+---
+
 ## Security
 
 Please report vulnerabilities via [`SECURITY.md`](./SECURITY.md). A draft

@@ -510,6 +510,23 @@ fn receive_message_rejects_duplicate_intent_id() {
     assert_eq!(res, Err(Ok(Error::ProofAlreadyExists.into())));
 }
 
+#[test]
+fn receive_message_rejects_unsupported_chain() {
+    let ctx = setup();
+    let c = ctx.client();
+    let emitter = emitter_addr(&ctx.env, 0x11);
+    // Authorized emitter exists, but chain 9999 is not a supported chain.
+    c.set_authorized_emitter(&9999, &emitter);
+
+    let intent_id = make_intent_id(&ctx.env, 11);
+    let payload = make_payload(&intent_id, 9999, 1);
+    let vaa = build_vaa(&ctx.env, 9999, &emitter, 1, &payload);
+
+    let res = c.try_receive_message(&vaa);
+    assert_eq!(res, Err(Ok(Error::UnsupportedChain.into())));
+    assert!(!c.has_proof(&intent_id));
+}
+
 // ─── receive_message: malformed / inconsistent ────────────────────────────
 
 #[test]

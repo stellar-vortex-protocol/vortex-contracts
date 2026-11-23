@@ -205,7 +205,14 @@ pub enum Error {
     /// Issue #408 — `get_fresh_proof` found a proof that has exceeded
     /// `PROOF_VALIDITY_WINDOW` since it was received.
     ProofStale = 12,
+    /// The proof's chain ID is not in [`SUPPORTED_CHAIN_IDS`].
+    UnsupportedChain = 13,
 }
+
+/// Wormhole chain IDs the registry accepts proofs from
+/// (see `docs/132-supported-chains.md`): Solana, Ethereum, BSC, Polygon,
+/// Avalanche, Arbitrum, Optimism, Base.
+pub const SUPPORTED_CHAIN_IDS: [u32; 8] = [1, 2, 4, 5, 6, 23, 24, 30];
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
 
@@ -344,6 +351,7 @@ impl ProofRegistry {
     /// Fails closed:
     /// * malformed VAA / bad signature set → traps inside the Wormhole Core
     ///   call, reverting this call;
+    /// * `Error::UnsupportedChain` — envelope chain not in `SUPPORTED_CHAIN_IDS`;
     /// * `Error::EmitterNotAuthorized` — envelope emitter not on the allowlist;
     /// * `Error::EmitterChainMismatch` — payload chain ≠ signed emitter chain;
     /// * `Error::InvalidPayload` — payload not exactly 102 bytes;
@@ -359,6 +367,11 @@ impl ProofRegistry {
         // The Wormhole Core contract checks the signature set and returns the
         // decoded envelope. Anything wrong with the VAA traps there.
         let envelope = WormholeCoreClient::new(&env, &core).parse_and_verify_vaa(&vaa);
+
+        // ── Supported-chain check ────────────────────────────────────────────
+        if !SUPPORTED_CHAIN_IDS.contains(&envelope.emitter_chain) {
+            panic_with_error!(&env, Error::UnsupportedChain);
+        }
 
         // ── Emitter authorization (envelope, not payload) ───────────────────
         let authorized: BytesN<32> = env
@@ -502,6 +515,9 @@ impl ProofRegistry {
         let chain_hi = Self::byte(&env, &payload, 52) as u32;
         let chain_lo = Self::byte(&env, &payload, 53) as u32;
         let src_chain_id: u32 = (chain_hi << 8) | chain_lo;
+        if !SUPPORTED_CHAIN_IDS.contains(&src_chain_id) {
+            panic_with_error!(&env, Error::UnsupportedChain);
+        }
 
         // Decode src_amount (bytes 86..102) as big-endian i128.
         let mut amount_bytes = [0u8; 16];
