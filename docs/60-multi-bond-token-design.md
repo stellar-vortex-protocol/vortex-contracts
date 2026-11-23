@@ -384,6 +384,13 @@ solver, `register_solver` and `slash_solver` each pay for 1 additional
 | `Error::BondTokenNotAllowed` | New (22) |
 | `Error::TooManyBondTokens` | New (23) |
 
+### Fee router recipient list
+
+`fee_router` keeps the whole recipient (sink) list under a single instance-storage
+key (`DataKey::Sinks`). `distribute` reads it once per call; the only writers are
+`initialize` and `apply_weights`, which overwrite that key, so the next
+distribution always sees the new list. Public interface and events are unchanged.
+
 ---
 
 *Closes #60*
