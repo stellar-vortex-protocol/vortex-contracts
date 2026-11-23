@@ -538,26 +538,14 @@ fn intent_fill_history_ttl_bumped_if_key_exists() {
     ctx.dst_admin().mint(&ctx.solver, &FILL);
     ctx.client().fill_intent(&ctx.solver, &id, &FILL, &false);
 
-    // Check whether IntentFillHistory was written.  If not yet implemented,
-    // we skip the TTL assertion and note the gap in the doc.
-    let history_exists = ctx.env.as_contract(&ctx.contract_id, || {
-        ctx.env
-            .storage()
-            .persistent()
-            .has(&DataKey::IntentFillHistory(id.clone()))
-    });
-
-    if history_exists {
-        let ttl = ctx.persistent_ttl(&DataKey::IntentFillHistory(id));
-        assert!(
-            ttl >= PERSISTENT_TTL_EXTEND_TO - 1,
-            "IntentFillHistory TTL {ttl} below threshold — history could be \
-            archived before close_intent runs, silently losing fill records"
-        );
-    }
-    // If fill history is not yet written, the test passes with a note:
-    // FIXME(fill-history-ttl): when IntentFillHistory writes are added,
-    // ensure extend_ttl is called after every append.
+    // Issue #522: IntentFillHistory is now written by fill_intent on every fill.
+    // Assert that the key exists and its TTL meets the persistence threshold.
+    let ttl = ctx.persistent_ttl(&DataKey::IntentFillHistory(id));
+    assert!(
+        ttl >= PERSISTENT_TTL_EXTEND_TO - 1,
+        "IntentFillHistory TTL {ttl} below threshold — history could be \
+        archived before close_intent runs, silently losing fill records"
+    );
 }
 
 // ─── 7. IntentTombstone key ──────────────────────────────────────────────────

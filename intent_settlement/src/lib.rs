@@ -3475,8 +3475,6 @@ impl IntentSettlement {
     /// (`require_auth()` is one-shot per address per invocation). The solver's
     /// signature over the batch call still covers the individual dst-token
     /// transfers each fill performs.
-    fn fill_intent_inner(env: Env, solver: Address, intent_id: BytesN<32>, fill_amount: i128, require_proof: bool) {
-    /// Body of `fill_intent` without the `solver.require_auth()` gate.
     ///
     /// Issue #375: uses `InvocationCtx` to load `Config`, `FeeRecipient`,
     /// and `TotalVolume` exactly once, and commits dirty counters in a single
@@ -3606,6 +3604,36 @@ impl IntentSettlement {
             .persistent()
             .set(&DataKey::Solver(solver.clone()), &solver_record);
         Self::bump_solver_ttl(&env, &solver);
+
+        // Issue #522 / #244: append this fill to the bounded on-chain fill-history
+        // log so indexers can reconstruct per-intent fill events without replaying
+        // the full event stream.  Oldest entries are evicted (FIFO) once the cap
+        // of `MAX_FILL_HISTORY` entries is reached.  TTL is bumped after every
+        // append so the key outlives the intent itself (#145).
+        {
+            let hist_key = DataKey::IntentFillHistory(intent_id.clone());
+            let mut history: Vec<(Address, i128, u64)> = env
+                .storage()
+                .persistent()
+                .get(&hist_key)
+                .unwrap_or_else(|| Vec::new(&env));
+
+            if history.len() >= MAX_FILL_HISTORY as usize {
+                // FIFO eviction: remove the oldest entry to stay within the cap.
+                let mut trimmed: Vec<(Address, i128, u64)> = Vec::new(&env);
+                for i in 1..history.len() {
+                    trimmed.push_back(history.get(i as u32).unwrap());
+                }
+                history = trimmed;
+            }
+            history.push_back((solver.clone(), fill_amount, now));
+            env.storage().persistent().set(&hist_key, &history);
+            env.storage().persistent().extend_ttl(
+                &hist_key,
+                PERSISTENT_TTL_THRESHOLD,
+                PERSISTENT_TTL_EXTEND_TO,
+            );
+        }
 
         ctx.add_volume(fill_amount);
         ctx.commit(&env);
@@ -3833,47 +3861,6 @@ impl IntentSettlement {
     }
 
     /// Solver begins fill by depositing dst_token into escrow. Starts dispute window.
-    /// Replaces the direct transfer in fill_intent once this design is implemented.
-    /// For now, this is a placeholder establishing the interface.
-    pub fn begin_fill(env: Env, solver: Address, intent_id: BytesN<32>, fill_amount: i128) {
-        solver.require_auth();
-        Self::require_not_paused(&env);
-        Self::bump_instance_ttl(&env);
-
-        let mut intent: IntentRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Intent(intent_id.clone()))
-            .unwrap_or_else(|| panic_with_error!(&env, Error::IntentNotFound));
-
-        if intent.solver.as_ref() != Some(&solver) {
-            panic_with_error!(&env, Error::Unauthorized);
-        }
-
-        if intent.state != IntentState::Accepted {
-            panic_with_error!(&env, Error::IntentNotAccepted);
-        }
-
-        let now = env.ledger().timestamp();
-        if now >= intent.deadline {
-            panic_with_error!(&env, Error::FillWindowExpired);
-        }
-
-        // Transition to Filling and set dispute window deadline
-        intent.state = IntentState::Filling;
-        intent.dispute_deadline = Some(now + DISPUTE_WINDOW);
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::Intent(intent_id.clone()), &intent);
-        Self::bump_intent_ttl(&env, &intent_id);
-
-        env.events().publish(
-            (Symbol::new(&env, "fill_begun"),),
-            (intent_id, solver, fill_amount),
-        );
-    }
-
     /// Permissionless: slash a solver that accepted but didn't fill within FILL_WINDOW
     pub fn slash_solver(env: Env, intent_id: BytesN<32>) {
         Self::bump_instance_ttl(&env);
@@ -5047,26 +5034,66 @@ impl IntentSettlement {
             panic_with_error!(&env, Error::IntentExpired);
         }
 
-        let cfg = Self::load_config(&env);
         let min_bond = Self::get_adjusted_min_bond(&env, &bond_token);
         if bond_amount < min_bond {
             panic_with_error!(&env, Error::SolverBondTooLow);
         }
 
-        // Store solver bond (simplified — real impl would track per-solver)
+        // Issue #521: per-solver bond tracking for outbound intents.
+        //
+        // Load (or create) the solver's SolverRecord and credit the posted
+        // bond in the chosen token using the same helpers as the forward-
+        // direction flow (`register_solver_inner` / `accept_intent`).  The
+        // bond is pulled from the solver into the contract via `pull_exact`
+        // so fee-on-transfer tokens are handled correctly (#409), and
+        // `set_solver_bond_amount` keeps `bond_amount`, `bond_tokens`, and
+        // the per-token `DataKey::SolverBond` entries in sync (#187).
+        let mut solver_record: SolverRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Solver(solver.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::SolverNotRegistered));
+
+        let existing_bond = Self::get_solver_bond_amount(&env, &solver_record, &bond_token);
+
+        // ── Effects first (CEI) ─────────────────────────────────────────────
+        let new_bond = existing_bond.saturating_add(bond_amount);
+        Self::set_solver_bond_amount(&env, &mut solver_record, &bond_token, new_bond);
+        solver_record.active_intents += 1;
+
         outbound_intent.solver = Some(solver.clone());
         outbound_intent.state = OutboundIntentState::SolverAccepted;
-        outbound_intent.bond_token = bond_token;
+        outbound_intent.bond_token = bond_token.clone();
         outbound_intent.solver_tier = Self::solver_tier(&env, &solver);
 
+        env.storage()
+            .persistent()
+            .set(&DataKey::Solver(solver.clone()), &solver_record);
+        Self::bump_solver_ttl(&env, &solver);
         env.storage()
             .persistent()
             .set(&DataKey::OutboundIntent(outbound_intent_id.clone()), &outbound_intent);
         Self::bump_intent_ttl(&env, &outbound_intent_id);
 
+        // ── Interaction: pull bond from solver into contract (#409) ─────────
+        let received = Self::pull_exact(&env, &bond_token, &solver, bond_amount);
+        if received != bond_amount {
+            // Correct for fee-on-transfer: re-derive stored bond from actual delta.
+            let corrected = existing_bond.saturating_add(received);
+            let mut corrected_record: SolverRecord = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Solver(solver.clone()))
+                .unwrap();
+            Self::set_solver_bond_amount(&env, &mut corrected_record, &bond_token, corrected);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Solver(solver.clone()), &corrected_record);
+        }
+
         env.events().publish(
             (Symbol::new(&env, "outbound_intent_accepted"), solver.clone()),
-            outbound_intent_id.clone(),
+            (outbound_intent_id.clone(), bond_token, bond_amount),
         );
     }
 
