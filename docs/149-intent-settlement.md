@@ -44,6 +44,10 @@ after.
   The record-size table below covers the write-bytes dimension.
 - Token transfers inside `fill_intent`, `register_solver`, `slash_solver` etc.
   call the Stellar Asset Contract; that cost is included.
+- Every settlement transfer (including fee distribution) uses the panicking
+  `token::Client::transfer`. A failed transfer aborts the whole invocation, so
+  no partial payouts persist. Do not switch to `try_transfer` without also
+  handling the error path explicitly.
 - Numbers are tied to the SDK version. Pin them and regenerate on upgrade.
 
 ---
