@@ -13,14 +13,14 @@ This guide walks through running a local Soroban test network and deploying Vort
 ### 1. Start the Local Network
 
 ```bash
-./setup-local-network.sh start
+make local-network-start
+# or directly: ./setup-local-network.sh start
 ```
 
 This:
 - Spins up a Stellar quickstart container with Horizon and Soroban RPC enabled
 - Waits for both to be healthy and responsive
-- Configures the Stellar CLI to connect to the local network
-- Provides test accounts with pre-funded balances
+- Registers a `local` network with the Stellar CLI
 
 **Output:**
 ```
@@ -46,13 +46,10 @@ Network Passphrase: Standalone Network ; February 2025
 make build
 ```
 
-Or build all contracts at once:
+This builds the release wasm for every wasm crate in the workspace. Output goes to the workspace-level `target/wasm32-unknown-unknown/release/`. To build only `intent_settlement`:
 
 ```bash
-cd intent_settlement && cargo build --target wasm32-unknown-unknown --release
-cd ../solver_registry && cargo build --target wasm32-unknown-unknown --release
-cd ../proof_registry && cargo build --target wasm32-unknown-unknown --release
-cd ../reputation_badge && cargo build --target wasm32-unknown-unknown --release
+make intent_settlement-build
 ```
 
 ### 3. Deploy and Test
@@ -66,15 +63,15 @@ export STELLAR_NETWORK=local
 Create a test account (or use a pre-funded account from the quickstart container):
 
 ```bash
-stellar keys generate --network $STELLAR_NETWORK test-account
-export STELLAR_ACCOUNT=$(stellar account info test-account --network $STELLAR_NETWORK | jq -r '.id')
+stellar keys generate --network $STELLAR_NETWORK --fund test-account
+export STELLAR_ACCOUNT=$(stellar keys address test-account)
 ```
 
 Deploy the intent settlement contract:
 
 ```bash
 stellar contract deploy \
-  --wasm intent_settlement/target/wasm32-unknown-unknown/release/vortex_intent_settlement.wasm \
+  --wasm target/wasm32-unknown-unknown/release/vortex_intent_settlement.wasm \
   --source test-account \
   --network $STELLAR_NETWORK
 ```
@@ -94,23 +91,30 @@ stellar contract invoke \
   --network $STELLAR_NETWORK \
   -- initialize \
     --admin test-account \
-    --fee_recipient test-account
+    --fee_recipient test-account \
+    --bond_token <bond_token_contract_id>
 ```
+
+`bond_token` must be a deployed SEP-41 token contract (`initialize` probes it and fails otherwise).
 
 ### 4. Run Integration Tests
 
-With the network running and contract deployed:
+The workspace integration suite builds fresh wasms and runs against them in-process:
 
 ```bash
-export STELLAR_NETWORK=local
-export CONTRACT_ID="<your_contract_id>"
-cargo test --package vortex-intent-settlement --lib --features testutils -- --test-threads=1
+make integration-test
 ```
 
-Or run a specific test:
+To run the end-to-end smoke test against a local standalone network (register_solver, submit_intent, accept_intent, fill_intent), use:
 
 ```bash
-cargo test --package vortex-intent-settlement --lib test_submit_and_accept -- --nocapture
+./scripts/e2e-test.sh
+```
+
+To run the `intent_settlement` unit tests:
+
+```bash
+make intent_settlement-test
 ```
 
 ## Network Management
@@ -118,28 +122,32 @@ cargo test --package vortex-intent-settlement --lib test_submit_and_accept -- --
 ### Check Network Status
 
 ```bash
-./setup-local-network.sh status
+make local-network-status
 ```
 
 ### View Logs
 
 ```bash
-./setup-local-network.sh logs
+make local-network-logs
 ```
 
 ### Stop Network (Preserves Data)
 
 ```bash
-./setup-local-network.sh stop
+make local-network-stop
 ```
 
 ### Clean Network (Destructive)
 
 ```bash
-./setup-local-network.sh clean
+make local-network-clean
 ```
 
 This removes all ledger data and volumes. Use before starting fresh.
+
+### Deploy the Other Contracts
+
+`setup-local-network.sh` also provides `deploy-contracts` (deploys and initializes the newer contracts from `target/wasm32-unknown-unknown/release`, writing IDs to `.local-network.env`) and `deploy-timelock <admin> [min_delay]`. Run `./setup-local-network.sh` with an unknown command to print the full usage.
 
 ## Common Workflows
 
@@ -156,7 +164,7 @@ make build
 
 # Deploy intent_settlement
 INTENT_ID=$(stellar contract deploy \
-  --wasm intent_settlement/target/wasm32-unknown-unknown/release/vortex_intent_settlement.wasm \
+  --wasm target/wasm32-unknown-unknown/release/vortex_intent_settlement.wasm \
   --source test-account \
   --network $STELLAR_NETWORK)
 
@@ -165,7 +173,8 @@ stellar contract invoke \
   --id $INTENT_ID \
   --source test-account \
   --network $STELLAR_NETWORK \
-  -- initialize --admin test-account --fee_recipient test-account
+  -- initialize --admin test-account --fee_recipient test-account \
+  --bond_token <bond_token_contract_id>
 
 echo "Intent Settlement Contract ID: $INTENT_ID"
 ```
@@ -184,13 +193,14 @@ stellar contract invoke \
     --src_amount "1000000" \
     --dst_token "CA5MFQQ2Z7EJGG37CGIQY2RJ2XGPKPVDQGTIDWX6VVMGUMG5JQYWF7U" \
     --min_dst_amount "3000000" \
-    --deadline "9999999999"
+    --deadline 9999999999
 ```
 
 ## Architecture
 
 - **Horizon**: REST API for balance queries, transaction submission (port 8000)
 - **Soroban RPC**: JSON-RPC 2.0 endpoint for smart contract invocation (port 8001)
+- **Docker service**: `stellar` (container `vortex-soroban-testnet`, image `stellar/quickstart`), defined in `docker-compose.yml`
 - **Ledger Data**: Persisted in Docker volume `stellar-ledger` (auto-created)
 - **Network Passphrase**: `Standalone Network ; February 2025` (hardcoded in quickstart)
 
@@ -211,7 +221,7 @@ Or install the standalone `docker-compose` tool.
 Wait a few more seconds for the RPC to fully boot. Check logs:
 
 ```bash
-./setup-local-network.sh logs
+make local-network-logs
 ```
 
 ### Contract deploy fails with "InvalidContractData"
@@ -219,7 +229,7 @@ Wait a few more seconds for the RPC to fully boot. Check logs:
 Ensure the WASM binary was built in release mode:
 
 ```bash
-cd intent_settlement && cargo build --target wasm32-unknown-unknown --release
+make intent_settlement-build
 ```
 
 ## Next Steps

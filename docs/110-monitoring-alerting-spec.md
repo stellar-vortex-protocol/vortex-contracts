@@ -30,7 +30,7 @@ Two complementary sources feed monitoring:
   [#111](111-expire-intent-event-coverage.md) for the specific gap around
   intent expiry.
 - **Views** (`get_stats`, `is_paused`, `get_solver_count`,
-  `get_protocol_health` — see [#112](../intent_settlement/src/lib.rs)) —
+  `get_protocol_health` — all in [`intent_settlement/src/lib.rs`](../intent_settlement/src/lib.rs)) —
   point-in-time state, good for reconciliation and dashboards, but require
   polling and can't alone tell you *when* something changed.
 
@@ -46,15 +46,15 @@ truth" snapshot (catches anything a missed/dropped event would hide).
 
 | Signal | Source | Condition | Severity |
 |---|---|---|---|
-| Unexpected pause | `paused` event, payload `true` | Any occurrence outside a pre-announced maintenance window | **P1 — page immediately.** `submit_intent`/`accept_intent`/`fill_intent` are now halted protocol-wide. |
-| Unexpected unpause | `paused` event, payload `false` | Any occurrence outside a pre-announced maintenance window | **P1 — page immediately.** Confirm it was an authorized admin action, not a compromised key restoring cover for further abuse. |
+| Unexpected pause | `paused` event (`intent_settlement/src/lib.rs`, `pause`) | Any occurrence outside a pre-announced maintenance window | **P1 — page immediately.** `submit_intent`/`accept_intent`/`fill_intent` are now halted protocol-wide. |
+| Unexpected unpause | `unpaused` event (`intent_settlement/src/lib.rs`, `unpause`) | Any occurrence outside a pre-announced maintenance window | **P1 — page immediately.** Confirm it was an authorized admin action, not a compromised key restoring cover for further abuse. |
 | Paused longer than expected | `is_paused()` (or `get_protocol_health().paused`) polled | `true` for longer than the announced maintenance window | **P2** — escalate if pause persists past its stated end time. |
 
-The `paused` topic is reused for both pause and unpause, distinguished only
-by the boolean payload — an indexer must decode the payload, not just match
-the topic name, to tell the two apart. This ambiguity is called out as an
-anti-pattern to avoid in future contracts; see
-[#113](113-event-topic-naming-conventions.md).
+`pause` emits `paused` and `unpause` emits `unpaused`, so the two are
+distinguished by topic (see [`docs/event-schema.md`](event-schema.md) and
+[#113](113-event-topic-naming-conventions.md)). The shipped monitor,
+[`monitoring/vortex-monitor.js`](../monitoring/vortex-monitor.js), matches
+both topics.
 
 ### 3.2 Solver risk signals
 
@@ -94,8 +94,7 @@ instead of requiring off-chain enumeration.
 
 ## 4. Suggested Dashboard Layout
 
-A single top-of-dashboard status panel backed by `get_protocol_health`
-(#112) covers the "is the protocol currently healthy" question in one
+A single top-of-dashboard status panel backed by `get_protocol_health` covers the "is the protocol currently healthy" question in one
 call: paused state, total intents, total volume, and solver count. Below
 it, time-series panels driven by the event stream cover the per-category
 signals in §3.
@@ -105,11 +104,6 @@ signals in §3.
 ## 5. Open Follow-Ups
 
 - Aggregate bonded-collateral view (§3.2) — separate issue if needed.
-- Consider emitting a distinguishable topic for pause vs. unpause instead
-  of a shared `paused` topic with a boolean payload (tracked alongside the
-  broader naming-convention cleanup in [#113](113-event-topic-naming-conventions.md);
-  changing an existing topic is an indexer-breaking change and should ship
-  as its own versioned migration, not bundled here).
 
 ---
 

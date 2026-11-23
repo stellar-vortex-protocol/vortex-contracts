@@ -26,6 +26,7 @@ This directory contains the Vortex Protocol's public proof-of-reserves dashboard
   - No backend required; fetches live data from Stellar RPC
   - Responsive design; works on desktop and mobile
   - Refreshes data every 5 minutes
+  - Keyboard navigable: press Tab once to reveal the "Skip to main content" link and Enter to jump to the main region; every interactive element shows a focus ring on `:focus-visible`
 
 ## Configuration
 
