@@ -205,6 +205,7 @@ impl BackstopVault {
             panic_with_error!(&env, Error::BelowMinDeposit);
         }
 
+        // Totals are read once and reused below; they cannot change mid-call.
         let total_assets = Self::load_total_assets(&env);
         let total_shares = Self::load_total_shares(&env);
 
@@ -330,6 +331,7 @@ impl BackstopVault {
             panic_with_error!(&env, Error::CooldownNotExpired);
         }
 
+        // Totals are read once and reused below; they cannot change mid-call.
         let total_assets = Self::load_total_assets(&env);
         let total_shares = Self::load_total_shares(&env);
 
