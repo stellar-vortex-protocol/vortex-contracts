@@ -205,6 +205,8 @@ pub enum Error {
     /// Issue #408 — `get_fresh_proof` found a proof that has exceeded
     /// `PROOF_VALIDITY_WINDOW` since it was received.
     ProofStale = 12,
+    /// An empty address was supplied where a non-empty one is required.
+    EmptyAddress = 13,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -289,8 +291,12 @@ impl ProofRegistry {
     /// Admin-only: register the trusted source address for an Axelar source
     /// chain. Only messages whose `source_address` matches the value stored
     /// for their `source_chain` are accepted by `receive_message_axelar`.
+    /// Rejects an empty `source_address` with `Error::EmptyAddress`.
     pub fn set_authorized_axelar_source(env: Env, chain_name: Symbol, source_address: String) {
         Self::require_admin(&env);
+        if source_address.len() == 0 {
+            panic_with_error!(&env, Error::EmptyAddress);
+        }
         env.storage().instance().set(
             &ProofKey::AuthorizedAxelarSource(chain_name.clone()),
             &source_address,
