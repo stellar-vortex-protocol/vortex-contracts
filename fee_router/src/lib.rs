@@ -224,23 +224,18 @@ impl FeeRouter {
         }
 
         let sinks: Vec<Sink> = env.storage().instance().get(&DataKey::Sinks).unwrap();
-        let mut distributed: i128 = 0;
         let len = sinks.len();
-        for i in 0..len {
+        // Every other sink takes its floor share first; sinks[0] then takes the
+        // exact remainder so the full balance is conserved.
+        let mut others: i128 = 0;
+        for i in 1..len {
             let sink = sinks.get(i).unwrap();
-            let share = if i == 0 {
-                // First sink absorbs rounding dust.
-                total - distributed
-            } else {
-                total * (sink.weight_bps as i128) / (TOTAL_BPS as i128)
-            };
-            distributed += share;
-            if share > 0 {
-                let key = DataKey::Claimable(sink.account.clone(), token.clone());
-                let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-                env.storage().persistent().set(&key, &(current + share));
-            }
+            let share = total * (sink.weight_bps as i128) / (TOTAL_BPS as i128);
+            others += share;
+            credit_claimable(&env, &sink.account, &token, share);
         }
+        let first = sinks.get(0).unwrap();
+        credit_claimable(&env, &first.account, &token, total - others);
 
         env.storage()
             .persistent()
@@ -326,6 +321,15 @@ impl FeeRouter {
     pub fn pending_executable_at(env: Env) -> Option<u64> {
         let pending: Option<PendingWeights> = env.storage().instance().get(&DataKey::Pending);
         pending.map(|p| p.executable_at)
+    }
+}
+
+/// Add `amount` to `account`'s claimable balance for `token`. Zero is a no-op.
+fn credit_claimable(env: &Env, account: &Address, token: &Address, amount: i128) {
+    if amount > 0 {
+        let key = DataKey::Claimable(account.clone(), token.clone());
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + amount));
     }
 }
 
