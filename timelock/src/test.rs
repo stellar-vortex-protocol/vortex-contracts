@@ -5,7 +5,7 @@ extern crate std;
 use super::*;
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, testutils::Address as _, Address, Env, Map,
-    String, Symbol, Vec,
+    String, Symbol, Val, Vec, BytesN,
 };
 
 // ---------------------------------------------------------------------------
@@ -594,4 +594,38 @@ fn full_admin_transfer_flow() {
     h.client.execute(&grant_id);
 
     assert!(h.client.has_role(&EXECUTOR_ROLE, &new_executor));
+}
+
+// ---------------------------------------------------------------------------
+// Empty target function name.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn schedule_rejects_empty_function_name_and_stores_nothing() {
+    let h = setup();
+    let args: Vec<Val> = Vec::new(&h.env);
+    let pred = BytesN::from_array(&h.env, &[0u8; 32]);
+    let s = BytesN::from_array(&h.env, &[7u8; 32]);
+
+    let mut calls = Vec::new(&h.env);
+    calls.push_back(Call {
+        target: h.target.clone(),
+        function: Symbol::new(&h.env, ""),
+        args: args.clone(),
+    });
+    let id = h.client.hash_operation(&calls, &pred, &s);
+
+    let res = h.client.try_schedule_batch(&calls, &pred, &s, &MIN_DELAY);
+    assert_eq!(res, Err(Ok(TimelockError::EmptyFunctionName)));
+    assert_eq!(h.client.get_operation_state(&id), OperationState::Unset);
+
+    // A non-empty name still schedules.
+    let mut ok_calls = Vec::new(&h.env);
+    ok_calls.push_back(Call {
+        target: h.target.clone(),
+        function: Symbol::new(&h.env, "set_value"),
+        args,
+    });
+    let ok_id = h.client.schedule_batch(&ok_calls, &pred, &s, &MIN_DELAY);
+    assert_eq!(h.client.get_operation_state(&ok_id), OperationState::Waiting);
 }

@@ -230,15 +230,24 @@ impl BackstopVault {
             .persistent()
             .get(&DataKey::Shares(lp.clone()))
             .unwrap_or(0);
+        let new_lp_shares = lp_shares
+            .checked_add(shares_minted)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ArithmeticOverflow));
+        let new_total_shares = total_shares
+            .checked_add(shares_minted)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ArithmeticOverflow));
+        let new_total_assets = total_assets
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::ArithmeticOverflow));
         env.storage()
             .persistent()
-            .set(&DataKey::Shares(lp.clone()), &(lp_shares + shares_minted));
+            .set(&DataKey::Shares(lp.clone()), &new_lp_shares);
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares, &(total_shares + shares_minted));
+            .set(&DataKey::TotalShares, &new_total_shares);
         env.storage()
             .instance()
-            .set(&DataKey::TotalAssets, &(total_assets + amount));
+            .set(&DataKey::TotalAssets, &new_total_assets);
         Self::bump_persistent_ttl(&env, &DataKey::Shares(lp.clone()));
 
         // Cooldown scoping (Issue #485).
@@ -788,6 +797,35 @@ mod tests {
         client.deposit(&lp, &deposit_amount);
 
         (client, token_client, lp, deposit_ts)
+    }
+
+    /// A deposit whose `amount * total_shares` overflows i128 must return
+    /// `ArithmeticOverflow` and mint nothing.
+    #[test]
+    fn deposit_overflowing_share_math_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let settlement = Address::generate(&env);
+        let lp = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let bond_token = env
+            .register_stellar_asset_contract_v2(token_admin.clone())
+            .address();
+        let token_admin_client = token::StellarAssetClient::new(&env, &bond_token);
+        let contract_id = env.register(BackstopVault, ());
+        let client = BackstopVaultClient::new(&env, &contract_id);
+        client.initialize(&admin, &bond_token, &settlement);
+        token_admin_client.mint(&lp, &i128::MAX);
+
+        let res = client.try_deposit(&lp, &i128::MAX);
+        assert_eq!(res, Err(Ok(Error::ArithmeticOverflow)));
+
+        let (assets, shares, _) = client.get_vault_state();
+        assert_eq!(assets, VIRTUAL_ASSETS);
+        assert_eq!(shares, VIRTUAL_SHARES);
+        let (lp_shares, _, _) = client.get_lp_position(&lp);
+        assert_eq!(lp_shares, 0);
     }
 
     /// Boundary: `now == cooldown_until` must succeed (inclusive boundary).

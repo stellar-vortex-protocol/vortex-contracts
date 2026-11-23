@@ -58,6 +58,8 @@ pub enum TimelockError {
     NotExpired = 11,
     /// The operation has no predecessor but one was supplied, or vice versa.
     InvalidPredecessorState = 12,
+    /// A call's target function name is empty.
+    EmptyFunctionName = 13,
 }
 
 /// A single call inside a batch.
@@ -224,6 +226,12 @@ impl TimelockController {
         delay: u64,
     ) -> BytesN<32> {
         Self::require_role(&env, &PROPOSER);
+
+        for call in calls.iter() {
+            if call.function == Symbol::new(&env, "") {
+                env.panic_with_error(TimelockError::EmptyFunctionName);
+            }
+        }
 
         let min_delay = Self::get_min_delay(env.clone());
         if delay < min_delay {

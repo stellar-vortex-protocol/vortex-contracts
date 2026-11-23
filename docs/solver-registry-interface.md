@@ -110,6 +110,13 @@ implicit-signer ambiguity.
 | `get_solver_count()` | `u32`. |
 | `get_writer()` / `get_admin()` / `get_bond_token()` | `Option<Address>`. |
 
+> **Enumeration and ordering.** `solver_registry` stores each record under its
+> own key (`DataKey::Solver(address)`) and keeps only a count; it does not
+> expose `list_solvers` and maintains no ordered index. Reads are point lookups
+> (`get_solver`, `get_solver_count`) with no ordering guarantee. Integrators
+> that need the set of solvers, or registration order, must replay the
+> `solver_registered` / `solver_deregistered` events, which are ordered by ledger.
+
 ### `SolverRecord`
 
 ```rust
